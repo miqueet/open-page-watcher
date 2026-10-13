@@ -55,3 +55,67 @@ test('export strips runtime state', () => {
   assert.equal('unread' in e, false);
   assert.equal('lastError' in e, false);
 });
+
+test('schedule: time windows', async () => {
+  const { inWindow } = await import('../src/lib/watch.js');
+  const sched = (start, end, days = [1, 2, 3, 4, 5]) => ({ window: { enabled: true, days, start, end } });
+  const at = (day, h, m = 0) => new Date(2026, 9, 11 + day, h, m); // 2026-10-11 is a Sunday
+  assert.equal(inWindow(sched('09:00', '17:00'), at(1, 10)), true);
+  assert.equal(inWindow(sched('09:00', '17:00'), at(1, 17)), false);
+  assert.equal(inWindow(sched('09:00', '17:00'), at(0, 10)), false); // Sunday
+  // Overnight window on Monday night covers early Tuesday.
+  assert.equal(inWindow(sched('22:00', '06:00', [1]), at(1, 23)), true);
+  assert.equal(inWindow(sched('22:00', '06:00', [1]), at(2, 3)), true);
+  assert.equal(inWindow(sched('22:00', '06:00', [1]), at(2, 23)), false);
+  assert.equal(inWindow({ window: { enabled: false } }, at(0, 3)), true);
+});
+
+test('schedule: random intervals and due checks', async () => {
+  const { nextCheckTime, isDue } = await import('../src/lib/watch.js');
+  const w = sanitizeWatch({ url: 'https://example.com', intervalMinutes: 10, schedule: { type: 'random', randomMaxMinutes: 30 } });
+  assert.equal(nextCheckTime(w, 0, () => 0), 10 * 60_000);
+  assert.equal(nextCheckTime(w, 0, () => 1), 30 * 60_000);
+  const plain = sanitizeWatch({ url: 'https://example.com', intervalMinutes: 10 });
+  assert.equal(nextCheckTime(plain, 0), 10 * 60_000);
+  const now = Date.now();
+  assert.equal(isDue({ ...plain, nextCheckAt: now + 60_000 }, now), false);
+  assert.equal(isDue({ ...plain, nextCheckAt: now - 1 }, now), true);
+});
+
+test('random max is never below the interval, labels are cleaned', () => {
+  const w = sanitizeWatch({
+    url: 'https://example.com', intervalMinutes: 60, schedule: { type: 'random', randomMaxMinutes: 5 },
+    labels: [' Work ', 'work', 'prices', 7, ''],
+  });
+  assert.equal(w.schedule.randomMaxMinutes, 60);
+  assert.deepEqual(w.labels, ['Work', 'prices']);
+});
+
+test('selector attributes and excludes are validated', () => {
+  const w = sanitizeWatch({
+    url: 'https://example.com',
+    selectors: [{ expr: 'a', attr: 'href' }, { expr: 'b', attr: 'on"click' }],
+    excludes: [{ expr: '.ad', attr: 'href' }],
+  });
+  assert.deepEqual(w.selectors, [{ type: 'css', expr: 'a', attr: 'href' }, { type: 'css', expr: 'b' }]);
+  assert.deepEqual(w.excludes, [{ type: 'css', expr: '.ad' }]);
+});
+
+test('sameDocument ignores fragments only', async () => {
+  const { sameDocument } = await import('../src/lib/watch.js');
+  assert.equal(sameDocument('https://a.com/x#1', 'https://a.com/x#2'), true);
+  assert.equal(sameDocument('https://a.com/x?a=1', 'https://a.com/x?a=2'), false);
+});
+
+test('ignore options normalize what counts as a change', async () => {
+  const { comparisonKey } = await import('../src/lib/watch.js');
+  const a = 'Updated Oct 12, 2026 at 9:15 am. Price $10. 3 minutes ago';
+  const b = 'Updated Oct 13, 2026 at 10:02 am. Price $10. 1 hour ago';
+  assert.notEqual(comparisonKey(a), comparisonKey(b));
+  assert.equal(comparisonKey(a, { dates: true }), comparisonKey(b, { dates: true }));
+  assert.notEqual(comparisonKey('Price $10', { dates: true }), comparisonKey('Price $12', { dates: true }));
+  assert.equal(comparisonKey('Price $10', { numbers: true }), comparisonKey('Price $12', { numbers: true }));
+  assert.equal(comparisonKey('In  Stock\n', { whitespace: true, case: true }), comparisonKey('in stock', { whitespace: true, case: true }));
+  assert.deepEqual(sanitizeWatch({ url: 'https://e.com', ignore: { dates: 1, numbers: true } }).ignore,
+    { case: false, whitespace: false, numbers: true, dates: false });
+});

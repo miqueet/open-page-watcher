@@ -19,16 +19,45 @@ from Distill or any other proprietary extension.
 
 ## Features
 
-- Watch a whole page, or click to select just the parts you care about
-- CSS and XPath selectors, plus an optional regex to keep only matching text
-- Checks from every minute up to every 7 days
-- Pages that need JavaScript can be rendered in a hidden window before reading
-- Alert conditions: any change, text appears or disappears, added text contains,
-  regex match, number above / below / increased / decreased
-- Inbox with unread changes, filters, search and a line + word diff between any
-  two saved versions
-- Desktop notifications, an optional sound and an unread count on the toolbar icon
-- Import and export of your watches as JSON
+**Choosing what to watch**
+- Watch a whole page, or click to select just the parts you care about, and
+  click inside a selection to leave parts out (ads, timestamps)
+- CSS and XPath selectors, attributes such as `@href`, and an optional regex to
+  keep only matching text
+- Quick fills for all links, the page title, headings or the description
+- Web pages, JSON, plain text, PDF files, RSS/Atom feeds and XML sitemaps
+- Pages that need JavaScript can be rendered in a hidden window, including
+  content inside frames
+- Right-click any page or link to watch it, or press Alt+Shift+W to pick parts
+
+**When to check**
+- Every minute up to every 7 days, or at a random time within a range
+- Only during certain hours and days
+- Instantly while the page is open in a tab (live mode)
+
+**When to alert**
+- Rules combined with all/any: text contains, starts or ends with, is empty,
+  matches a regex, length, never seen before, number above or below, and number
+  up or down by an amount or a percentage, checked on the new, added, removed or
+  previous text
+- Ignore changes that are only dates, numbers, letter case or spacing
+- Notifications that say what changed ("Went down from $1,299 to $1,199"),
+  an optional sound, or the change read aloud
+- Quiet hours, and an option to combine alerts into one summary
+- An alert when a watch keeps failing
+
+**Reviewing changes**
+- Inbox with unread changes, labels, filters, search, bulk actions and keyboard
+  shortcuts
+- Text, side-by-side, visual and source views of any two saved versions
+- A chart of the number on the page over time
+- Open the page with what changed highlighted
+- A log of recent checks for each watch
+
+**Keeping control**
+- Password-protected backups (AES-256-GCM), plus plain JSON import and export
+- IT teams can limit sites, intervals and options through Chrome policy (see
+  [docs/enterprise.md](docs/enterprise.md))
 
 See [docs/SPEC.md](docs/SPEC.md) for how this maps to Distill's features, what is
 deliberately left out, and the full security model.
@@ -40,7 +69,9 @@ deliberately left out, and the full security model.
 2. Open `chrome://extensions` and turn on **Developer mode**.
 3. Click **Load unpacked** and choose the unzipped folder (the one that contains `manifest.json`).
 
-Each release also has a `.sha256` file so you can check the zip wasn't altered.
+Each release also has a `.sha256` file so you can check the zip wasn't altered,
+and a `-chrome-web-store.zip` ready to upload to the Chrome Web Store (see
+[docs/chrome-web-store.md](docs/chrome-web-store.md)).
 
 Managed work machines sometimes block unpacked extensions. In that case your IT
 team can review this repository and publish it internally or allow-list it.
@@ -59,12 +90,14 @@ team can review this repository and publish it internally or allow-list it.
 
 | Permission | Why |
 | --- | --- |
-| `storage` | Save your watches and their history locally |
+| `storage`, `unlimitedStorage` | Save your watches and their history locally, without the 10 MB cap |
 | `alarms` | Run checks on a schedule |
 | `notifications` | Show change alerts |
 | `offscreen` | Parse pages without running their scripts, and play the alert sound |
-| `activeTab`, `scripting` | Inject the element picker into the tab you're on when you click it, and read rendered pages |
-| Site access (optional, per site) | Requested only for sites you watch |
+| `activeTab`, `scripting` | Inject the element picker into the tab you're on when you ask for it, read rendered pages, and highlight changes on a page you open from the inbox |
+| `contextMenus` | The "Watch this page" right-click items |
+| `tts` | Read changes aloud, if you turn that on for a watch (on-device voices only) |
+| Site access (optional, per site) | Requested only for sites you watch, and released when you stop |
 
 ## Development
 
@@ -72,6 +105,10 @@ team can review this repository and publish it internally or allow-list it.
 npm test                    # unit tests, no dependencies needed
 PLAYWRIGHT=$(npm root -g)/playwright node test/e2e.mjs   # browser tests (needs Playwright + Chromium)
 ```
+
+## Privacy
+
+Nothing leaves your browser. See [PRIVACY.md](PRIVACY.md).
 
 ## License
 

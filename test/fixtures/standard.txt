@@ -1,0 +1,24 @@
+Quarterly Report
+The quick brown fox jumps over the lazy dog.
+Prices rose 4.5% in the third quarter (see table).
+Second paragraph line with punctuation: a, b; c!
+
+Café, naïve façade — “quoted” • €5 ‘single’
+code: x = 42; y = x * 2
+
+Table
+Apples
+
+3
+
+Bananas
+
+12
+
+Cherries
+
+7
+
+Page three ends here.
+
+

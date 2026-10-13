@@ -16,36 +16,69 @@ jobs:
         with:
           node-version: 22
       - name: Release tag from manifest version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           tag="v$(node -p "require('./manifest.json').version")"
           if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "$tag" ]; then
             echo "Tag $GITHUB_REF_NAME does not match manifest version $tag"; exit 1
           fi
           echo "TAG=$tag" >> "$GITHUB_ENV"
+          # Re-running for an existing release refreshes its assets, built
+          # from the tagged extension files rather than from this commit.
+          if gh release view "$tag" > /dev/null 2>&1; then
+            echo "EXISTS=1" >> "$GITHUB_ENV"
+            git fetch --depth=1 origin "refs/tags/$tag:refs/tags/$tag"
+            git checkout "$tag" -- manifest.json src icons LICENSE README.md
+            rm -f managed_schema.json
+            git checkout "$tag" -- managed_schema.json 2>/dev/null || true
+          fi
       - run: npm test
-      - name: Build zip
+      - name: Build zips
         run: |
           name="open-page-watcher-$TAG"
-          mkdir -p "dist/$name"
-          cp -r manifest.json src icons LICENSE README.md "dist/$name/"
-          (cd dist && zip -rq "$name.zip" "$name" && sha256sum "$name.zip" > "$name.zip.sha256")
+          mkdir -p "dist/$name" dist/webstore
+          files="manifest.json src icons LICENSE"
+          if [ -f managed_schema.json ]; then files="$files managed_schema.json"; fi
+          # For "Load unpacked": everything inside a named folder.
+          cp -r $files README.md "dist/$name/"
+          (cd dist && zip -rqX "$name.zip" "$name")
+          # For the Chrome Web Store: manifest.json at the root of the zip.
+          cp -r $files dist/webstore/
+          node scripts/check-package.mjs dist/webstore
+          (cd dist/webstore && zip -rqX "../$name-chrome-web-store.zip" .)
+          (cd dist && sha256sum "$name.zip" "$name-chrome-web-store.zip" > "$name.sha256")
+          unzip -l "dist/$name-chrome-web-store.zip" | grep -q " manifest.json$"
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           name="open-page-watcher-$TAG"
           cat > notes.md <<NOTES
-          ## Install
+          ## Install (load unpacked)
 
           1. Download **$name.zip** below and unzip it.
           2. Open \`chrome://extensions\` and turn on **Developer mode**.
           3. Click **Load unpacked** and choose the unzipped \`$name\` folder.
 
-          The zip contains exactly the files in this tag's \`manifest.json\`, \`src/\` and \`icons/\`, with no build step. Verify it with:
+          ## Publish to the Chrome Web Store
+
+          Upload **$name-chrome-web-store.zip** in the Chrome Web Store Developer Dashboard. It has \`manifest.json\` at the root, as the store requires. Listing text, permission justifications and images are in [docs/chrome-web-store.md](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/chrome-web-store.md).
+
+          ## Verify
+
+          Both zips contain exactly this tag's \`manifest.json\`, \`src/\` and \`icons/\`, with no build step.
 
           \`\`\`
-          sha256sum -c $name.zip.sha256
+          sha256sum -c $name.sha256
           \`\`\`
           NOTES
-          gh release create "$TAG" "dist/$name.zip" "dist/$name.zip.sha256" \
-            --target "$GITHUB_SHA" --title "Open Page Watcher $TAG" --notes-file notes.md --generate-notes
+          assets=("dist/$name.zip" "dist/$name-chrome-web-store.zip" "dist/$name.sha256")
+          if [ -n "$EXISTS" ]; then
+            gh release upload "$TAG" "${assets[@]}" --clobber
+            gh release delete-asset "$TAG" "$name.zip.sha256" --yes 2>/dev/null || true
+            gh release edit "$TAG" --notes-file notes.md
+          else
+            gh release create "$TAG" "${assets[@]}" \
+              --target "$GITHUB_SHA" --title "Open Page Watcher $TAG" --notes-file notes.md --generate-notes
+          fi

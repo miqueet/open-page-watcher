@@ -1,11 +1,12 @@
-// Element picker. Injected into the active tab only when the user clicks
-// "Select parts of this page" in the popup. Runs in the extension's isolated
+// Element picker. Injected into the active tab only when the user starts it
+// from the popup, the right-click menu or the keyboard shortcut. Runs in the extension's isolated
 // world, so the page's own scripts can't see or call it.
 (() => {
   if (window.__openPageWatcherPicker) return;
   window.__openPageWatcherPicker = true;
 
   const selected = [];
+  const excluded = [];
   const host = document.createElement('div');
   host.style.cssText = 'all: initial; position: fixed; inset: 0; pointer-events: none; z-index: 2147483647;';
   const root = host.attachShadow({ mode: 'closed' });
@@ -15,6 +16,7 @@
       .box { position: fixed; pointer-events: none; box-sizing: border-box; border-radius: 3px; }
       .hover { border: 2px dashed #2563eb; background: rgba(37, 99, 235, 0.08); }
       .sel { border: 2px solid #16a34a; background: rgba(22, 163, 74, 0.12); }
+      .exc { border: 2px solid #dc2626; background: rgba(220, 38, 38, 0.18); }
       .bar {
         position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
         pointer-events: auto; display: flex; gap: 8px; align-items: center;
@@ -30,7 +32,7 @@
     <div class="box hover" hidden></div>
     <div class="sels"></div>
     <div class="bar">
-      <span class="msg">Click the parts of the page to watch.</span>
+      <span class="msg">Click parts to watch. Click inside a selection to leave part out. Enter saves, Esc cancels.</span>
       <button class="primary save" disabled>Save (0)</button>
       <button class="cancel">Cancel</button>
     </div>`;
@@ -52,21 +54,25 @@
   }
 
   function redraw() {
-    selBoxes.replaceChildren(...selected.map((el) => {
+    const box = (el, cls) => {
       const b = document.createElement('div');
-      b.className = 'box sel';
+      b.className = `box ${cls}`;
       place(b, el);
       return b;
-    }));
+    };
+    selBoxes.replaceChildren(...selected.map((el) => box(el, 'sel')), ...excluded.map((el) => box(el, 'exc')));
     saveBtn.disabled = selected.length === 0;
-    saveBtn.textContent = `Save (${selected.length})`;
+    saveBtn.textContent = excluded.length ? `Save (${selected.length}, ${excluded.length} left out)` : `Save (${selected.length})`;
   }
 
   function isOurs(target) {
     return target === host || bar.contains(target);
   }
 
+  // Only real input from the user counts: the page could dispatch fake
+  // clicks and key presses to pick and save parts of its choosing.
   function onMove(e) {
+    if (!e.isTrusted) return;
     const el = e.target;
     if (isOurs(el) || !(el instanceof Element)) {
       hoverBox.hidden = true;
@@ -77,19 +83,29 @@
   }
 
   function onClick(e) {
-    if (isOurs(e.target) || e.composedPath().includes(host)) return;
+    if (!e.isTrusted || isOurs(e.target) || e.composedPath().includes(host)) return;
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();
     const el = e.target;
     if (!(el instanceof Element)) return;
-    const i = selected.indexOf(el);
-    if (i >= 0) selected.splice(i, 1);
-    else {
-      // Selecting a parent replaces its selected children, and vice versa.
-      for (let j = selected.length - 1; j >= 0; j--) {
-        if (el.contains(selected[j]) || selected[j].contains(el)) selected.splice(j, 1);
-      }
+    const drop = (list, test) => {
+      for (let j = list.length - 1; j >= 0; j--) if (test(list[j])) list.splice(j, 1);
+    };
+    if (excluded.includes(el)) {
+      // Clicking an excluded part puts it back.
+      drop(excluded, (x) => x === el);
+    } else if (selected.includes(el)) {
+      drop(selected, (x) => x === el);
+      drop(excluded, (x) => el.contains(x));
+    } else if (selected.some((s) => s.contains(el))) {
+      // Inside a selection: leave this part out.
+      drop(excluded, (x) => el.contains(x));
+      excluded.push(el);
+    } else {
+      // Selecting a parent replaces its selected children.
+      drop(selected, (x) => el.contains(x));
+      drop(excluded, (x) => !selected.some((s) => s.contains(x)) && !el.contains(x));
       selected.push(el);
     }
     redraw();
@@ -103,9 +119,13 @@
   }
 
   function onKey(e) {
+    if (!e.isTrusted) return;
     if (e.key === 'Escape') {
       e.preventDefault();
-      stop();
+      cancel();
+    } else if (e.key === 'Enter' && selected.length && !saveBtn.disabled) {
+      e.preventDefault();
+      save();
     }
   }
 
@@ -160,8 +180,9 @@
     saveBtn.disabled = true;
     cancelBtn.disabled = true;
     const selectors = selected.map(selectorFor);
+    const excludes = excluded.map(selectorFor);
     try {
-      const res = await chrome.runtime.sendMessage({ type: 'picker:save', selectors });
+      const res = await chrome.runtime.sendMessage({ type: 'picker:save', selectors, excludes });
       if (!res?.ok) throw new Error(res?.error || 'Could not save');
       msg.textContent = 'Saved. Open the extension to see this watch.';
       setTimeout(stop, 1800);
@@ -183,13 +204,21 @@
     delete window.__openPageWatcherPicker;
   }
 
+  function cancel() {
+    stop();
+    chrome.runtime.sendMessage({ type: 'picker:cancel' }).catch(() => {});
+  }
+
   function redrawAll() {
     hoverBox.hidden = true;
     redraw();
   }
 
-  saveBtn.addEventListener('click', save);
-  cancelBtn.addEventListener('click', stop);
+  saveBtn.addEventListener('click', (e) => e.isTrusted && save());
+  cancelBtn.addEventListener('click', (e) => e.isTrusted && cancel());
+  // Lets the extension note which page the picker was started on; a save is
+  // only accepted from that same page.
+  chrome.runtime.sendMessage({ type: 'picker:start' }).catch(() => {});
   document.addEventListener('mousemove', onMove, true);
   document.addEventListener('click', onClick, true);
   for (const t of ['mousedown', 'mouseup', 'pointerdown', 'pointerup', 'submit']) document.addEventListener(t, block, true);

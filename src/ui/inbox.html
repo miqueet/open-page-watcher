@@ -16,6 +16,7 @@
       <button id="mark-all">Mark all read</button>
       <button id="export">Export</button>
       <button id="import">Import</button>
+      <button id="settings">Settings</button>
       <input id="import-file" type="file" accept="application/json,.json" hidden>
     </div>
   </header>
@@ -28,6 +29,21 @@
         <button data-filter="paused">Paused</button>
       </div>
       <input id="search" type="search" placeholder="Search watches">
+      <div id="labels" class="labels"></div>
+      <div id="bulk" class="bulk" hidden>
+        <label class="inline"><input id="select-all" type="checkbox"> <span id="bulk-count"></span></label>
+        <select id="bulk-action" aria-label="Action for selected watches">
+          <option value="">Action…</option>
+          <option value="checkNow">Check now</option>
+          <option value="markRead">Mark read</option>
+          <option value="markUnread">Mark unread</option>
+          <option value="pause">Pause</option>
+          <option value="resume">Resume</option>
+          <option value="addLabel">Add label…</option>
+          <option value="removeLabel">Remove label…</option>
+          <option value="delete">Delete</option>
+        </select>
+      </div>
       <ul id="list"></ul>
       <p id="list-empty" class="muted" hidden></p>
     </aside>
