@@ -7,7 +7,9 @@ aside { border-right: 1px solid var(--border); display: flex; flex-direction: co
 .filters button { flex: 1; padding: 4px 6px; font-size: 13px; }
 .filters button.active { background: var(--bg-soft); border-color: var(--accent); }
 #list { list-style: none; margin: 0; padding: 0; overflow: auto; flex: 1; }
-#list li button { width: 100%; text-align: left; border: none; border-radius: 6px; padding: 8px; display: grid; grid-template-columns: 12px 1fr; gap: 2px 8px; }
+#list li { display: flex; align-items: flex-start; gap: 4px; }
+#list li > input { width: auto; margin: 10px 0 0 4px; }
+#list li button { flex: 1; min-width: 0; width: 100%; text-align: left; border: none; border-radius: 6px; padding: 8px; display: grid; grid-template-columns: 12px 1fr; gap: 2px 8px; }
 #list li button.selected { background: var(--bg-soft); outline: 1px solid var(--border); }
 #list .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #list .sub { grid-column: 2; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -46,3 +48,23 @@ legend { font-weight: 600; padding: 0 4px; }
   aside { border-right: none; border-bottom: 1px solid var(--border); }
 }
 .versions label { white-space: nowrap; }
+.labels { display: flex; flex-wrap: wrap; gap: 4px; }
+.labels:empty { display: none; }
+.chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg); }
+.chip.active { border-color: var(--accent); background: var(--bg-soft); }
+.bulk { display: flex; gap: 8px; align-items: center; justify-content: space-between; font-size: 13px; }
+.bulk select { width: auto; }
+.tabs { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.tabs button { border: none; border-radius: 0; padding: 4px 10px; }
+.tabs button.active { background: var(--accent); color: var(--accent-fg); }
+.side { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.visual-frame { width: 100%; height: 60vh; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+.rules { display: grid; gap: 6px; }
+.rule { display: grid; grid-template-columns: 140px 1fr 1fr auto; gap: 6px; }
+.days { display: flex; gap: 6px; flex-wrap: wrap; }
+.days label { display: flex; gap: 4px; align-items: center; font-size: 13px; }
+details.log summary { cursor: pointer; margin: 16px 0 8px; font-weight: 500; }
+table.log { border-collapse: collapse; width: 100%; font-size: 13px; }
+table.log td, table.log th { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.diff [data-change].current { outline: 2px solid var(--accent); }
+.label-tag { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--bg-soft); border: 1px solid var(--border); margin-left: 4px; }

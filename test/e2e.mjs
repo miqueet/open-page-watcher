@@ -25,6 +25,7 @@ fs.writeFileSync(path.join(extDir, 'manifest.json'), JSON.stringify(manifest));
 let price = '$10';
 let cookieSeen = null;
 let trackerHits = 0;
+let feedItems = ['Hello world', 'Second post'];
 const server = http.createServer((req, res) => {
   if (req.url === '/product') {
     cookieSeen = req.headers.cookie || '';
@@ -48,6 +49,37 @@ const server = http.createServer((req, res) => {
   if (req.url === '/data.json') {
     res.setHeader('content-type', 'application/json');
     return res.end(JSON.stringify({ price, ok: true }));
+  }
+  if (req.url === '/feed.xml') {
+    res.setHeader('content-type', 'application/rss+xml');
+    return res.end(`<?xml version="1.0"?><rss version="2.0"><channel><title>News</title>
+      ${feedItems.map((t, i) => `<item><title>${t}</title><link>${base}/post/${i}</link><pubDate>${new Date().toUTCString()}</pubDate></item>`).join('')}
+      </channel></rss>`);
+  }
+  if (req.url === '/atom.xml') {
+    res.setHeader('content-type', 'application/atom+xml');
+    return res.end(`<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>A</title>
+      <entry><title>First</title><link rel="alternate" href="${base}/a/1"/><updated>2026-01-01T00:00:00Z</updated></entry></feed>`);
+  }
+  if (req.url === '/sitemap.xml') {
+    res.setHeader('content-type', 'application/xml');
+    return res.end(`<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <url><loc>${base}/one</loc><lastmod>2026-01-01</lastmod></url><url><loc>${base}/two</loc></url></urlset>`);
+  }
+  if (req.url === '/links') {
+    res.setHeader('content-type', 'text/html');
+    return res.end(`<!doctype html><title>Links</title><div id="box"><p class="keep">Keep ${price}</p>
+      <p class="ad">Ad ${Date.now()}</p><a id="dl" href="/files/v${price.replace(/\D/g, '')}.zip" onclick="steal()">Download</a>
+      <img src="/tracker.png" onerror="steal()"><form action="https://evil.example/"><input name="q"></form>
+      <script>steal()</script></div>`);
+  }
+  if (req.url === '/broken') {
+    res.statusCode = 500;
+    return res.end('down');
+  }
+  if (req.url === '/live') {
+    res.setHeader('content-type', 'text/html');
+    return res.end(`<!doctype html><title>Live</title><p id="n">0</p>`);
   }
   if (req.url === '/tracker.png') trackerHits++;
   res.statusCode = 404;
@@ -113,6 +145,7 @@ try {
   });
 
   let wholeId;
+  let linksId;
   await step('whole-page watch captures text without running scripts', async () => {
     const res = await send({ type: 'createWatch', watch: { url: `${base}/product` } });
     assert.equal(res.ok, true, res.error);
@@ -226,19 +259,13 @@ try {
     }, `${base}/product`);
     await tab.click('p.stock');
     await tab.screenshot({ path: process.env.SHOT || path.join(os.tmpdir(), 'opw-picker.png') });
-    // The toolbar is in a closed shadow root; press its Save button by position.
+    // The toolbar is in a closed shadow root, so save with the keyboard.
     const before = Object.keys((await page.evaluate(() => chrome.storage.local.get('watches'))).watches).length;
-    const box = await tab.evaluate(() => {
-      return { w: innerWidth, h: innerHeight };
-    });
-    let saved = false;
-    for (let x = box.w / 2 - 60; x <= box.w / 2 + 160 && !saved; x += 20) {
-      await tab.mouse.click(x, box.h - 34);
-      saved = await waitFor(async () => {
-        const n = Object.keys((await page.evaluate(() => chrome.storage.local.get('watches'))).watches).length;
-        return n > before;
-      }, 600).catch(() => false);
-    }
+    await tab.keyboard.press('Enter');
+    const saved = await waitFor(async () => {
+      const n = Object.keys((await page.evaluate(() => chrome.storage.local.get('watches'))).watches).length;
+      return n > before;
+    }, 5000).catch(() => false);
     assert.ok(saved, 'picker save not detected');
     const all = Object.values((await page.evaluate(() => chrome.storage.local.get('watches'))).watches);
     const w = all.find((x) => x.selectors[0]?.expr === 'p.stock' || x.selectors[0]?.expr.includes('nth-of-type(2)'));
@@ -261,6 +288,118 @@ try {
     await send({ type: 'deleteWatch', id: priceId });
     assert.equal(await watchOf(priceId), undefined);
     assert.equal((await history(priceId)).length, 0);
+  });
+
+  await step('excludes leave out parts; attributes resolve to absolute URLs', async () => {
+    const res = await send({
+      type: 'createWatch',
+      watch: {
+        url: `${base}/links`,
+        selectors: [{ type: 'css', expr: '#box' }, { type: 'css', expr: '#dl', attr: 'href' }],
+        excludes: [{ type: 'css', expr: '.ad' }],
+      },
+    });
+    const h = await waitFor(async () => (await history(res.id))[0]);
+    assert.doesNotMatch(h.text, /Ad \d/);
+    assert.match(h.text, /Keep \$8/);
+    assert.match(h.text, new RegExp(`${base}/files/v8\\.zip$`));
+    assert.ok(h.html.includes('class="keep"'));
+    assert.ok(!h.html.includes('class="ad"'));
+    assert.ok(!/onclick|onerror|<script/i.test(h.html), 'event handlers and scripts are not captured');
+    linksId = res.id;
+  });
+
+  await step('visual view renders captured HTML inertly with highlights', async () => {
+    price = '$7';
+    await send({ type: 'checkNow', id: linksId });
+    await page.evaluate(() => localStorage.setItem('opw:view', 'visual'));
+    await page.evaluate((id) => { location.hash = '#/'; location.hash = `#/w/${id}`; }, linksId);
+    await page.reload();
+    const frame = await page.waitForSelector('iframe.visual-frame');
+    assert.equal(await frame.getAttribute('sandbox'), '');
+    const srcdoc = await frame.getAttribute('srcdoc');
+    assert.match(srcdoc, /Content-Security-Policy/);
+    assert.match(srcdoc, /<mark class="opw-add">\$7<\/mark>/);
+    assert.ok(!/<script|onclick|onerror|href=|src=|<form|<input/i.test(srcdoc.split('</style>')[1]), 'active content stripped');
+    const hitsBefore = trackerHits;
+    await page.waitForTimeout(500);
+    assert.equal(trackerHits, hitsBefore, 'visual view loads nothing from the network');
+    for (const view of ['Side by side', 'Source', 'Text']) {
+      await page.click(`.tabs button:text("${view}")`);
+      await page.waitForSelector('.diff');
+    }
+    assert.ok(await page.$('.diff ins'));
+    await page.click('summary:text-matches("Check log")');
+    assert.ok((await page.textContent('table.log')).includes('Changed'));
+  });
+
+  await step('RSS, Atom and sitemaps become one line per entry', async () => {
+    const rss = await send({ type: 'createWatch', watch: { url: `${base}/feed.xml`, condition: { rules: [{ type: 'contains', on: 'added', value: 'third' }] } } });
+    const atom = await send({ type: 'createWatch', watch: { url: `${base}/atom.xml` } });
+    const map = await send({ type: 'createWatch', watch: { url: `${base}/sitemap.xml` } });
+    const h = await waitFor(async () => (await history(rss.id))[0]);
+    assert.equal(h.text, `Hello world — ${base}/post/0\nSecond post — ${base}/post/1`);
+    assert.equal((await waitFor(async () => (await history(atom.id))[0])).text, `First — ${base}/a/1`);
+    assert.equal((await waitFor(async () => (await history(map.id))[0])).text, `${base}/one\n${base}/two`);
+    feedItems = [...feedItems, 'Third post'];
+    await send({ type: 'checkNow', id: rss.id });
+    assert.equal((await watchOf(rss.id)).unread, true);
+  });
+
+  await step('labels and bulk actions', async () => {
+    const all = Object.keys((await page.evaluate(() => chrome.storage.local.get('watches'))).watches).slice(0, 3);
+    assert.equal((await send({ type: 'bulk', ids: all, action: 'addLabel', label: ' Work ' })).ok, true);
+    assert.deepEqual((await watchOf(all[0])).labels, ['Work']);
+    await send({ type: 'bulk', ids: all, action: 'pause' });
+    assert.equal((await watchOf(all[1])).paused, true);
+    await send({ type: 'bulk', ids: all, action: 'resume' });
+    await send({ type: 'bulk', ids: all, action: 'removeLabel', label: 'work' });
+    assert.deepEqual((await watchOf(all[0])).labels, []);
+    assert.equal((await send({ type: 'bulk', ids: all, action: 'bogus' })).ok, false);
+  });
+
+  await step('repeated failures raise an error alert and are logged', async () => {
+    await send({ type: 'saveSettings', settings: { errorAlerts: { enabled: true, after: 2, minIntervalMinutes: 15 } } });
+    const res = await send({ type: 'createWatch', watch: { url: `${base}/broken` } });
+    await waitFor(async () => (await watchOf(res.id)).errorCount === 1);
+    await send({ type: 'checkNow', id: res.id });
+    const w = await watchOf(res.id);
+    assert.equal(w.errorCount, 2);
+    assert.match(w.lastError, /HTTP 500/);
+    const times = await sw.evaluate(() => chrome.storage.session.get('errorAlertTimes'));
+    assert.ok(times.errorAlertTimes[res.id] > 0, 'error alert was sent');
+    const log = await page.evaluate(async (k) => (await chrome.storage.local.get(k))[k], `log:${res.id}`);
+    assert.equal(log.length, 2);
+    assert.equal(log[1].ok, false);
+  });
+
+  await step('time windows skip checks outside the allowed hours', async () => {
+    const now = new Date();
+    const otherDay = (now.getDay() + 3) % 7;
+    const res = await send({
+      type: 'createWatch',
+      watch: { url: `${base}/product`, schedule: { window: { enabled: true, days: [otherDay], start: '00:00', end: '23:59' } } },
+    });
+    const due = await page.evaluate(async (id) => {
+      const { isDue } = await import('/src/lib/watch.js');
+      const { watches } = await chrome.storage.local.get('watches');
+      return isDue({ ...watches[id], lastCheckedAt: 0, nextCheckAt: 0 }, Date.now());
+    }, res.id);
+    assert.equal(due, false);
+  });
+
+  await step('live mode re-reads an open tab when it changes', async () => {
+    const res = await send({ type: 'createWatch', watch: { url: `${base}/live`, live: true, selectors: [{ type: 'css', expr: '#n' }] } });
+    await waitFor(async () => (await history(res.id))[0]);
+    const tab = await context.newPage();
+    await tab.goto(`${base}/live`);
+    await tab.waitForTimeout(500);
+    await tab.evaluate(() => { document.getElementById('n').textContent = '42'; });
+    const h = await waitFor(async () => { const x = await history(res.id); return x.length >= 2 && x; }, 20000);
+    assert.equal(h[h.length - 1].text, '42');
+    const log = await page.evaluate(async (k) => (await chrome.storage.local.get(k))[k], `log:${res.id}`);
+    assert.ok(log.some((e) => e.via === 'live'));
+    await tab.close();
   });
 
   await step('popup renders', async () => {

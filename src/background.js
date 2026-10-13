@@ -1,21 +1,27 @@
 import { extractText } from './lib/extract.js';
-import { conditionMet } from './lib/conditions.js';
-import { addedText } from './lib/diff.js';
-import { sanitizeWatch, exportableWatch, postProcess, isDue, originPattern } from './lib/watch.js';
+import { conditionMet, addedText } from './lib/conditions.js';
+import { pdfToText } from './lib/pdf.js';
 import {
-  getWatches, getWatch, updateWatches, getHistory, appendHistory, deleteHistory,
+  sanitizeWatch, exportableWatch, postProcess, isDue, nextCheckTime, originPattern, sameDocument,
+} from './lib/watch.js';
+import {
+  getWatches, getWatch, updateWatches, getHistory, appendHistory, deleteHistory, appendLog,
+  getSettings, sanitizeSettings, serialize,
 } from './lib/storage.js';
 
 const TICK_ALARM = 'tick';
 const FETCH_TIMEOUT_MS = 30_000;
 const RENDER_TIMEOUT_MS = 45_000;
 const MAX_BYTES = 5 * 1024 * 1024;
+const MAX_PDF_BYTES = 20 * 1024 * 1024;
 const MAX_CONCURRENT = 3;
+const LIVE_MIN_GAP_MS = 10_000;
 const OFFSCREEN_URL = 'src/offscreen.html';
 const INBOX_URL = chrome.runtime.getURL('src/ui/inbox.html');
 const EXTENSION_ORIGIN = chrome.runtime.getURL('');
 
 const inFlight = new Set();
+const renderTabs = new Set(); // hidden tabs opened by "render in tab" checks
 
 // ---------------------------------------------------------------------------
 // Lifecycle
@@ -46,52 +52,92 @@ async function runDueChecks() {
 // ---------------------------------------------------------------------------
 // Checking a watch
 
-async function checkWatch(id) {
+// Runs one check. `via` is 'schedule' (also used for "Check now") or 'live'
+// (an open tab of the page changed); live checks read that tab directly.
+async function checkWatch(id, { via = 'schedule', tabId } = {}) {
   if (inFlight.has(id)) return;
   inFlight.add(id);
+  const started = Date.now();
   try {
     const watch = await getWatch(id);
     if (!watch) return;
-    let text;
+    let result;
     let error = '';
     try {
       const granted = await chrome.permissions.contains({ origins: [originPattern(watch.url)] });
-      if (!granted) throw new Error('Access to this site has not been granted. Edit the watch and save it to grant access.');
-      text = postProcess(watch.mode === 'tab' ? await renderAndExtract(watch) : await fetchAndExtract(watch), watch);
+      if (!granted) throw new Error('Access to this site has not been granted. Open the watch and click Allow.');
+      if (via === 'live') result = await extractInTab(tabId, watch);
+      else if (watch.mode === 'tab') result = await renderAndExtract(watch);
+      else result = await fetchAndExtract(watch);
+      result.text = postProcess(result.text, watch);
     } catch (e) {
       error = e?.message || String(e);
     }
-
-    const now = Date.now();
-    if (error) {
-      await updateWatches((all) => {
-        if (all[id]) Object.assign(all[id], { lastCheckedAt: now, lastError: error });
-      });
-      await broadcast({ type: 'changed', id });
-      return;
-    }
-
-    const history = await getHistory(id);
-    const previous = history[history.length - 1];
-    let alert = false;
-    if (!previous || previous.text !== text) {
-      await appendHistory(id, { t: now, text }, watch.historyLimit);
-      if (previous) alert = conditionMet(watch.condition, previous.text, text);
-    }
-    await updateWatches((all) => {
-      const w = all[id];
-      if (!w) return;
-      w.lastCheckedAt = now;
-      w.lastError = '';
-      if (previous && previous.text !== text) w.lastChangedAt = now;
-      if (alert) w.unread = true;
-    });
-    if (alert) await sendAlert(watch, previous.text, text).catch((e) => console.warn('Alert failed', e));
-    await updateBadge();
-    await broadcast({ type: 'changed', id });
+    await record(watch, result, error, { via, started });
   } finally {
     inFlight.delete(id);
   }
+}
+
+async function record(watch, result, error, { via, started }) {
+  const { id } = watch;
+  const now = Date.now();
+  const logEntry = { t: now, ok: !error, changed: false, alerted: false, error, ms: now - started, via };
+
+  if (error) {
+    const updated = await updateWatches((all) => {
+      const w = all[id];
+      if (!w) return null;
+      w.lastCheckedAt = now;
+      if (via !== 'live') w.nextCheckAt = nextCheckTime(w, now);
+      w.lastError = error;
+      w.errorCount = (w.errorCount || 0) + 1;
+      return { ...w };
+    });
+    await appendLog(id, logEntry);
+    if (updated) await maybeAlertError(updated, now);
+    await broadcast({ type: 'changed', id });
+    return;
+  }
+
+  const history = await getHistory(id);
+  const previous = history[history.length - 1];
+  const changed = !previous || previous.text !== result.text;
+  let alert = false;
+  if (changed) {
+    const entry = { t: now, text: result.text };
+    if (result.html) entry.html = result.html;
+    await appendHistory(id, entry, watch.historyLimit);
+    if (previous) {
+      logEntry.changed = true;
+      alert = conditionMet(watch.condition, previous.text, result.text, history.map((h) => h.text));
+    }
+  } else if (result.html && !previous.html) {
+    // Backfill the HTML of the current version so the visual view works.
+    await serialize(async () => {
+      const key = `history:${id}`;
+      const h = (await chrome.storage.local.get(key))[key] || [];
+      if (h.length && h[h.length - 1].text === result.text) {
+        h[h.length - 1].html = result.html;
+        await chrome.storage.local.set({ [key]: h });
+      }
+    });
+  }
+  logEntry.alerted = alert;
+  await updateWatches((all) => {
+    const w = all[id];
+    if (!w) return;
+    w.lastCheckedAt = now;
+    if (via !== 'live') w.nextCheckAt = nextCheckTime(w, now);
+    w.lastError = '';
+    w.errorCount = 0;
+    if (previous && changed) w.lastChangedAt = now;
+    if (alert) w.unread = true;
+  });
+  await appendLog(id, logEntry);
+  if (alert) await sendAlert(watch, previous.text, result.text).catch((e) => console.warn('Alert failed', e));
+  await updateBadge();
+  await broadcast({ type: 'changed', id });
 }
 
 async function fetchAndExtract(watch) {
@@ -107,7 +153,8 @@ async function fetchAndExtract(watch) {
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`The site answered with HTTP ${response.status}`);
-    bytes = await readLimited(response);
+    const isPdf = /application\/pdf/i.test(response.headers.get('content-type') || '');
+    bytes = await readLimited(response, isPdf ? MAX_PDF_BYTES : MAX_BYTES);
   } catch (e) {
     if (e.name === 'AbortError') throw new Error('The site took longer than 30 seconds to respond');
     throw e;
@@ -116,6 +163,10 @@ async function fetchAndExtract(watch) {
   }
 
   const contentType = response.headers.get('content-type') || '';
+  if (/application\/pdf/i.test(contentType) || startsWithPdfMagic(bytes)) {
+    return { text: await pdfToText(bytes), kind: 'pdf' };
+  }
+
   const charset = /charset=([\w-]+)/i.exec(contentType)?.[1] || 'utf-8';
   let body;
   try {
@@ -126,12 +177,12 @@ async function fetchAndExtract(watch) {
 
   if (/json/i.test(contentType)) {
     try {
-      return JSON.stringify(JSON.parse(body), null, 2);
+      return { text: JSON.stringify(JSON.parse(body), null, 2), kind: 'json' };
     } catch {
-      return body;
+      return { text: body, kind: 'text' };
     }
   }
-  if (/^text\/plain/i.test(contentType)) return body;
+  if (/^text\/plain/i.test(contentType)) return { text: body, kind: 'text' };
 
   await ensureOffscreen();
   const result = await chrome.runtime.sendMessage({
@@ -139,13 +190,21 @@ async function fetchAndExtract(watch) {
     type: 'extract',
     html: body,
     mime: /xml/i.test(contentType) && !/html/i.test(contentType) ? 'application/xml' : 'text/html',
-    spec: { selectors: watch.selectors },
+    spec: extractSpec(watch, response.url || watch.url),
   });
   if (!result?.ok) throw new Error(result?.error || 'Could not read the page');
-  return result.text;
+  return result;
 }
 
-async function readLimited(response) {
+function startsWithPdfMagic(bytes) {
+  return bytes.length > 4 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46;
+}
+
+function extractSpec(watch, baseUrl) {
+  return { selectors: watch.selectors, excludes: watch.excludes, baseUrl, captureHtml: true };
+}
+
+async function readLimited(response, limit) {
   const reader = response.body.getReader();
   const chunks = [];
   let total = 0;
@@ -153,9 +212,9 @@ async function readLimited(response) {
     const { done, value } = await reader.read();
     if (done) break;
     total += value.byteLength;
-    if (total > MAX_BYTES) {
+    if (total > limit) {
       reader.cancel();
-      throw new Error('The page is larger than 5 MB');
+      throw new Error(`The page is larger than ${Math.round(limit / 1024 / 1024)} MB`);
     }
     chunks.push(value);
   }
@@ -173,6 +232,7 @@ async function readLimited(response) {
 async function renderAndExtract(watch) {
   const win = await chrome.windows.create({ url: watch.url, state: 'minimized', focused: false });
   const tabId = win.tabs[0].id;
+  renderTabs.add(tabId);
   try {
     await waitForTabComplete(tabId);
     await new Promise((r) => setTimeout(r, watch.renderDelaySeconds * 1000));
@@ -180,17 +240,32 @@ async function renderAndExtract(watch) {
     if (!tab.url || new URL(tab.url).origin !== new URL(watch.url).origin) {
       throw new Error('The page redirected to a different site');
     }
-    const [injection] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: extractText,
-      args: [{ selectors: watch.selectors }],
-    });
-    const result = injection?.result;
-    if (!result?.ok) throw new Error(result?.error || 'Could not read the page');
-    return result.text;
+    return await extractInTab(tabId, watch);
   } finally {
+    renderTabs.delete(tabId);
     chrome.windows.remove(win.id).catch(() => {});
   }
+}
+
+// Runs the extractor in a tab (and, if the watch asks for it, in the tab's
+// frames that the extension has access to).
+async function extractInTab(tabId, watch) {
+  const tab = await chrome.tabs.get(tabId);
+  const injections = await chrome.scripting.executeScript({
+    target: watch.includeFrames ? { tabId, allFrames: true } : { tabId },
+    func: extractText,
+    args: [extractSpec(watch, tab.url)],
+  });
+  const main = injections.find((i) => i.frameId === 0)?.result;
+  const found = injections
+    .sort((a, b) => a.frameId - b.frameId)
+    .map((i) => i.result)
+    .filter((r) => r?.ok);
+  if (!found.length) throw new Error(main?.error || 'Could not read the page');
+  return {
+    text: found.map((r) => r.text).filter(Boolean).join('\n'),
+    html: found.map((r) => r.html || '').join(''),
+  };
 }
 
 function waitForTabComplete(tabId) {
@@ -217,6 +292,45 @@ function waitForTabComplete(tabId) {
       }
     }, () => {});
   });
+}
+
+// ---------------------------------------------------------------------------
+// Live mode: while a watched page is open in a tab, a small observer in that
+// tab reports DOM changes and the page is re-read right away.
+
+const lastLiveCheck = new Map();
+const pendingLiveCheck = new Map();
+
+// At most one live check per watch every LIVE_MIN_GAP_MS; a change reported
+// sooner than that is checked once the gap has passed.
+function liveCheck(id, tabId) {
+  const wait = (lastLiveCheck.get(id) || 0) + LIVE_MIN_GAP_MS - Date.now();
+  if (wait > 0) {
+    if (!pendingLiveCheck.has(id)) {
+      pendingLiveCheck.set(id, setTimeout(() => {
+        pendingLiveCheck.delete(id);
+        liveCheck(id, tabId);
+      }, wait));
+    }
+    return;
+  }
+  lastLiveCheck.set(id, Date.now());
+  checkWatch(id, { via: 'live', tabId }).catch(() => {});
+}
+
+chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
+  if (info.status !== 'complete' || !tab.url?.startsWith('http') || renderTabs.has(tabId)) return;
+  const live = Object.values(await getWatches()).filter((w) => w.live && !w.paused && sameDocument(w.url, tab.url));
+  if (!live.length) return;
+  if (!(await chrome.permissions.contains({ origins: [originPattern(tab.url)] }))) return;
+  await chrome.scripting.executeScript({ target: { tabId }, files: ['src/live.js'] }).catch(() => {});
+  for (const w of live) liveCheck(w.id, tabId);
+});
+
+async function onLiveChanged(tab) {
+  const live = Object.values(await getWatches()).filter((w) => w.live && !w.paused && sameDocument(w.url, tab.url));
+  for (const w of live) liveCheck(w.id, tab.id);
+  return {};
 }
 
 // ---------------------------------------------------------------------------
@@ -273,6 +387,26 @@ async function sendAlert(watch, oldText, newText) {
   }
 }
 
+// Tells the user once a watch has failed several checks in a row, then at
+// most every few minutes while it keeps failing.
+async function maybeAlertError(watch, now) {
+  const { errorAlerts } = await getSettings();
+  if (!errorAlerts.enabled || watch.errorCount < errorAlerts.after) return;
+  // Kept in session storage: survives service worker restarts, not browser restarts.
+  const { errorAlertTimes = {} } = await chrome.storage.session.get('errorAlertTimes');
+  if (now - (errorAlertTimes[watch.id] || 0) < errorAlerts.minIntervalMinutes * 60_000) return;
+  errorAlertTimes[watch.id] = now;
+  await chrome.storage.session.set({ errorAlertTimes });
+  await chrome.notifications.create(`watch:${watch.id}:${now}`, {
+    type: 'basic',
+    iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+    title: `Can't check: ${watch.name}`.slice(0, 120),
+    message: `${watch.errorCount} checks in a row failed. ${watch.lastError}`.slice(0, 300),
+    buttons: [{ title: 'View watch' }, { title: 'Open page' }],
+    priority: 1,
+  }).catch(() => {});
+}
+
 function watchIdFromNotification(notificationId) {
   const m = /^watch:([a-z0-9-]+):\d+$/i.exec(notificationId);
   return m ? m[1] : null;
@@ -318,14 +452,18 @@ function broadcast(message) {
 // Permissions housekeeping
 
 // Releases site access that no remaining watch needs.
-async function releaseUnusedOrigins(removedUrl) {
-  const pattern = originPattern(removedUrl);
-  const stillUsed = Object.values(await getWatches()).some((w) => originPattern(w.url) === pattern);
-  if (!stillUsed) await chrome.permissions.remove({ origins: [pattern] }).catch(() => {});
+async function releaseUnusedOrigins(removedUrls) {
+  const watches = Object.values(await getWatches());
+  const patterns = [...new Set(removedUrls.map(originPattern))]
+    .filter((p) => !watches.some((w) => originPattern(w.url) === p));
+  if (patterns.length) await chrome.permissions.remove({ origins: patterns }).catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
 // Messages
+
+// Changing any of these makes earlier versions incomparable with new ones.
+const CONTENT_FIELDS = ['url', 'selectors', 'excludes', 'regexFilter', 'mode', 'includeFrames'];
 
 const uiHandlers = {
   async createWatch({ watch }) {
@@ -341,20 +479,19 @@ const uiHandlers = {
     const before = await getWatch(watch?.id);
     if (!before) throw new Error('Watch not found');
     const clean = sanitizeWatch(watch, before);
-    const reset = before.url !== clean.url
-      || JSON.stringify(before.selectors) !== JSON.stringify(clean.selectors)
-      || before.regexFilter !== clean.regexFilter
-      || before.mode !== clean.mode;
+    const reset = CONTENT_FIELDS.some((f) => JSON.stringify(before[f]) !== JSON.stringify(clean[f]));
+    const rescheduled = before.intervalMinutes !== clean.intervalMinutes
+      || JSON.stringify(before.schedule) !== JSON.stringify(clean.schedule);
+    if (rescheduled) clean.nextCheckAt = nextCheckTime(clean, clean.lastCheckedAt || Date.now());
     await updateWatches((all) => {
       all[clean.id] = clean;
     });
     if (reset) {
-      // What is being watched changed, so earlier versions aren't comparable.
       await deleteHistory(clean.id);
       await updateWatches((all) => {
-        if (all[clean.id]) all[clean.id].lastCheckedAt = 0;
+        if (all[clean.id]) Object.assign(all[clean.id], { lastCheckedAt: 0, nextCheckAt: 0 });
       });
-      if (before.url !== clean.url) await releaseUnusedOrigins(before.url);
+      if (before.url !== clean.url) await releaseUnusedOrigins([before.url]);
       checkWatch(clean.id);
     }
     await broadcast({ type: 'changed', id: clean.id });
@@ -362,16 +499,7 @@ const uiHandlers = {
   },
 
   async deleteWatch({ id }) {
-    const watch = await getWatch(id);
-    if (!watch) return {};
-    await updateWatches((all) => {
-      delete all[id];
-    });
-    await deleteHistory(id);
-    await releaseUnusedOrigins(watch.url);
-    await updateBadge();
-    await broadcast({ type: 'changed', id });
-    return {};
+    return uiHandlers.bulk({ ids: [id], action: 'delete' });
   },
 
   async checkNow({ id }) {
@@ -380,26 +508,66 @@ const uiHandlers = {
   },
 
   async setRead({ id, read }) {
-    await updateWatches((all) => {
-      if (all[id]) all[id].unread = !read;
-    });
-    await updateBadge();
-    await broadcast({ type: 'changed', id });
-    return {};
+    return uiHandlers.bulk({ ids: [id], action: read ? 'markRead' : 'markUnread' });
   },
 
   async markAllRead() {
+    const ids = Object.keys(await getWatches());
+    return uiHandlers.bulk({ ids, action: 'markRead' });
+  },
+
+  // Applies one action to several watches.
+  async bulk({ ids, action, label }) {
+    if (!Array.isArray(ids)) throw new Error('No watches selected');
+    const idSet = new Set(ids.filter((id) => typeof id === 'string'));
+    const cleanLabel = typeof label === 'string' ? label.trim().replace(/\s+/g, ' ').slice(0, 40) : '';
+    if ((action === 'addLabel' || action === 'removeLabel') && !cleanLabel) throw new Error('Enter a label');
+    if (action === 'checkNow') {
+      for (const id of idSet) checkWatch(id);
+      return {};
+    }
+    const removed = [];
     await updateWatches((all) => {
-      for (const w of Object.values(all)) w.unread = false;
+      for (const id of idSet) {
+        const w = all[id];
+        if (!w) continue;
+        switch (action) {
+          case 'pause': w.paused = true; break;
+          case 'resume': w.paused = false; break;
+          case 'markRead': w.unread = false; break;
+          case 'markUnread': w.unread = true; break;
+          case 'addLabel':
+            if (!w.labels.some((l) => l.toLowerCase() === cleanLabel.toLowerCase()) && w.labels.length < 20) w.labels.push(cleanLabel);
+            break;
+          case 'removeLabel':
+            w.labels = w.labels.filter((l) => l.toLowerCase() !== cleanLabel.toLowerCase());
+            break;
+          case 'delete':
+            removed.push(w.url);
+            delete all[id];
+            break;
+          default:
+            throw new Error('Unknown action');
+        }
+      }
     });
+    if (action === 'delete') {
+      for (const id of idSet) await deleteHistory(id);
+      await releaseUnusedOrigins(removed);
+    }
     await updateBadge();
     await broadcast({ type: 'changed' });
     return {};
   },
 
+  async saveSettings({ settings }) {
+    await chrome.storage.local.set({ settings: sanitizeSettings(settings) });
+    return {};
+  },
+
   async exportAll() {
     const watches = Object.values(await getWatches()).map(exportableWatch);
-    return { data: { format: 'open-page-watcher', version: 1, watches } };
+    return { data: { format: 'open-page-watcher', version: 2, watches } };
   },
 
   async importAll({ data }) {
@@ -433,6 +601,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   let handler;
   if (message.type === 'picker:save' && sender.tab) {
     handler = () => savePickerWatch(message, sender.tab);
+  } else if (message.type === 'live:changed' && sender.tab?.url) {
+    handler = () => onLiveChanged(sender.tab);
   } else if (sender.url?.startsWith(EXTENSION_ORIGIN) && !sender.tab?.url?.startsWith('http')
     && Object.hasOwn(uiHandlers, message.type)) {
     handler = () => uiHandlers[message.type](message);
@@ -450,12 +620,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // The picker runs inside a web page; trust only its selectors, and take the
 // URL and title from the tab Chrome reports, not from the message.
 async function savePickerWatch(message, tab) {
-  const selectors = Array.isArray(message.selectors) ? message.selectors : [];
+  const toSelectors = (list) => (Array.isArray(list) ? list : [])
+    .filter((expr) => typeof expr === 'string')
+    .map((expr) => ({ type: 'css', expr }));
+  const selectors = toSelectors(message.selectors);
   if (!selectors.length) throw new Error('Select at least one element');
   const watch = sanitizeWatch({
     url: tab.url,
     name: typeof tab.title === 'string' ? tab.title.slice(0, 200) : '',
-    selectors: selectors.map((expr) => ({ type: 'css', expr: String(expr) })),
+    selectors,
+    excludes: toSelectors(message.excludes),
   });
   // If site access hasn't been granted yet, the watch is still saved; its first
   // check reports the missing access and the inbox offers to grant it.
