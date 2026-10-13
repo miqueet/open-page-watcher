@@ -66,20 +66,25 @@ function cleanTime(value, fallback) {
   return typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value) ? value : fallback;
 }
 
+// A time-of-day window on some weekdays (used by schedules and quiet hours).
+export function cleanWindow(w, fallback = { days: [1, 2, 3, 4, 5], start: '09:00', end: '17:00' }) {
+  const src = w || {};
+  const days = Array.isArray(src.days) ? [...new Set(src.days.map(Number).filter((d) => DAYS.includes(d)))].sort() : fallback.days;
+  return {
+    enabled: src.enabled === true,
+    days: days.length ? days : fallback.days,
+    start: cleanTime(src.start, fallback.start),
+    end: cleanTime(src.end, fallback.end),
+  };
+}
+
 function cleanSchedule(src) {
   const s = src.schedule || {};
-  const w = s.window || {};
-  const days = Array.isArray(w.days) ? [...new Set(w.days.map(Number).filter((d) => DAYS.includes(d)))].sort() : [1, 2, 3, 4, 5];
   return {
     type: s.type === 'random' ? 'random' : 'interval',
     // For random schedules, checks happen between intervalMinutes and this.
     randomMaxMinutes: clampInt(s.randomMaxMinutes, MIN_INTERVAL_MINUTES, MAX_INTERVAL_MINUTES, DEFAULT_INTERVAL_MINUTES * 2),
-    window: {
-      enabled: w.enabled === true,
-      days: days.length ? days : [1, 2, 3, 4, 5],
-      start: cleanTime(w.start, '09:00'),
-      end: cleanTime(w.end, '17:00'),
-    },
+    window: cleanWindow(s.window),
   };
 }
 
@@ -146,10 +151,11 @@ export function sanitizeWatch(input, existing = {}) {
     lastError: typeof existing.lastError === 'string' ? existing.lastError : '',
     errorCount: Number(existing.errorCount) || 0,
     unread: existing.unread === true,
+    lastSummary: typeof existing.lastSummary === 'string' ? existing.lastSummary : '',
   };
 }
 
-const RUNTIME_FIELDS = ['lastCheckedAt', 'lastChangedAt', 'nextCheckAt', 'lastError', 'errorCount', 'unread'];
+const RUNTIME_FIELDS = ['lastCheckedAt', 'lastChangedAt', 'nextCheckAt', 'lastError', 'errorCount', 'unread', 'lastSummary'];
 
 // Fields included in an export file.
 export function exportableWatch(w) {

@@ -4,8 +4,9 @@ import {
 import { diffText } from '../lib/diff.js';
 import { RULE_TYPES, RULE_SOURCES, normalizeCondition } from '../lib/conditions.js';
 import { DEFAULT_INTERVAL_MINUTES, DEFAULT_HISTORY } from '../lib/watch.js';
-import { getLog, getSettings } from '../lib/storage.js';
+import { getLog, getSettings, DIGEST_CHOICES } from '../lib/storage.js';
 import { visualDocument, sourceLines } from './visual.js';
+import { numberSeries, numberChart } from './chart.js';
 import { getPolicy, isManaged } from '../lib/policy.js';
 
 const $ = (id) => document.getElementById(id);
@@ -58,7 +59,10 @@ function matchesFilter(w) {
 function subtitle(w) {
   if (w.paused) return el('span', { class: 'sub muted' }, 'Paused');
   if (w.lastError) return el('span', { class: 'sub error' }, w.lastError);
-  if (w.lastChangedAt) return el('span', { class: 'sub muted' }, `Changed ${timeAgo(w.lastChangedAt)}`);
+  if (w.lastChangedAt) {
+    return el('span', { class: 'sub muted', title: w.lastSummary || '' },
+      `Changed ${timeAgo(w.lastChangedAt)}${w.lastSummary ? ` · ${w.lastSummary}` : ''}`);
+  }
   return el('span', { class: 'sub muted' }, `Checked ${timeAgo(w.lastCheckedAt)}`);
 }
 
@@ -198,6 +202,7 @@ async function renderDetail() {
     el('h1', {}, watch.name, ...(watch.labels || []).map((l) => el('span', { class: 'label-tag' }, l))),
     el('a', { class: 'url', href: watch.url, target: '_blank', rel: 'noopener noreferrer' }, watch.url),
     el('div', { class: 'meta muted' }, meta),
+    watch.lastSummary ? el('p', { class: 'summary' }, `Latest change: ${watch.lastSummary}`) : null,
     banner,
     watch.lastError ? el('p', { class: 'error' }, watch.lastError) : null,
     el('div', { class: 'row' },
@@ -220,9 +225,17 @@ async function renderDetail() {
           go('#/');
         },
       }, 'Delete')),
+    numberView(watch, history),
     historyView(history),
     logView(log),
   ].filter(Boolean));
+}
+
+function numberView(watch, history) {
+  if (watch.ignore?.numbers) return null;
+  const numericRule = normalizeCondition(watch.condition).rules.some((r) => RULE_TYPES[r.type]?.numeric);
+  const points = numberSeries(history, { numericRule });
+  return points ? numberChart(points) : null;
 }
 
 function versionLabel(entry, i) {
@@ -667,21 +680,68 @@ function watchForm(watch) {
 // ---------------------------------------------------------------------------
 // Settings
 
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function formatEvery(minutes) {
+  if (minutes < 60) return `${minutes} minutes`;
+  if (minutes === 60) return 'hour';
+  if (minutes === 1440) return 'day';
+  return `${minutes / 60} hours`;
+}
+
 async function settingsForm() {
   const s = await getSettings();
   const enabled = el('input', { type: 'checkbox', checked: s.errorAlerts.enabled });
   const after = el('input', { type: 'number', min: 1, max: 100, value: String(s.errorAlerts.after) });
   const every = el('input', { type: 'number', min: 1, max: 1440, value: String(s.errorAlerts.minIntervalMinutes) });
+  const digest = el('input', { type: 'checkbox', checked: s.delivery.mode === 'digest' });
+  const digestEvery = el('select', { 'aria-label': 'How often' },
+    DIGEST_CHOICES.map((m) => el('option', { value: String(m) }, formatEvery(m))));
+  digestEvery.value = String(s.delivery.digestEveryMinutes);
+  const quietOn = el('input', { type: 'checkbox', checked: s.quietHours.enabled });
+  const quietStart = el('input', { type: 'time', value: s.quietHours.start, 'aria-label': 'Quiet hours start' });
+  const quietEnd = el('input', { type: 'time', value: s.quietHours.end, 'aria-label': 'Quiet hours end' });
+  const quietDays = DAY_NAMES.map((d, i) => el('input', { type: 'checkbox', value: String(i), checked: s.quietHours.days.includes(i), 'aria-label': d }));
+  const digestRow = el('div', { class: 'inline' }, 'At most one notification every', digestEvery);
+  const quietRow = el('div', { class: 'field' },
+    el('div', { class: 'inline' }, 'From', quietStart, 'to', quietEnd),
+    el('div', { class: 'days' }, ...quietDays.map((d) => el('label', {}, d, d.getAttribute('aria-label')))));
+  const sync = () => {
+    digestRow.hidden = !digest.checked;
+    quietRow.hidden = !quietOn.checked;
+  };
+  digest.addEventListener('change', sync);
+  quietOn.addEventListener('change', sync);
+  sync();
+
   return el('form', {
+    id: 'settings-form',
     onsubmit: async (e) => {
       e.preventDefault();
       await call('saveSettings', {
-        settings: { errorAlerts: { enabled: enabled.checked, after: Number(after.value), minIntervalMinutes: Number(every.value) } },
+        settings: {
+          errorAlerts: { enabled: enabled.checked, after: Number(after.value), minIntervalMinutes: Number(every.value) },
+          delivery: { mode: digest.checked ? 'digest' : 'instant', digestEveryMinutes: Number(digestEvery.value) },
+          quietHours: {
+            enabled: quietOn.checked,
+            start: quietStart.value || '22:00',
+            end: quietEnd.value || '07:00',
+            days: quietDays.filter((d) => d.checked).map((d) => Number(d.value)),
+          },
+        },
       });
       toast('Settings saved.');
     },
   },
   el('h1', {}, 'Settings'),
+  el('fieldset', {}, el('legend', {}, 'Change alerts'),
+    el('label', { class: 'check' }, digest, el('span', {}, 'Combine alerts into one summary',
+      el('div', { class: 'hint' }, 'Changes are still recorded right away. Only the notifications are bundled.'))),
+    digestRow),
+  el('fieldset', {}, el('legend', {}, 'Quiet hours'),
+    el('label', { class: 'check' }, quietOn, el('span', {}, 'No notifications or sounds during these hours',
+      el('div', { class: 'hint' }, 'Watches keep checking. What changed is sent as one summary when quiet hours end.'))),
+    quietRow),
   el('fieldset', {}, el('legend', {}, 'Error alerts'),
     el('label', { class: 'check' }, enabled, el('span', {}, 'Notify me when a watch keeps failing')),
     el('div', { class: 'inline' }, 'After', after, 'failed checks in a row, at most every', every, 'minutes')),
@@ -746,6 +806,11 @@ async function refresh() {
 }
 
 function render() {
+  // "#/unread" (from a combined alert) opens the inbox filtered to unread.
+  if (location.hash === '#/unread') {
+    state.filter = 'unread';
+    history.replaceState(null, '', '#/');
+  }
   renderList();
   // Don't wipe a form the user is typing in.
   const { edit, isNew, settings } = route();

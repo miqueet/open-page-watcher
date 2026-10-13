@@ -1,3 +1,5 @@
+import { cleanWindow } from './watch.js';
+
 // All persistent state lives in chrome.storage.local.
 //   watches            -> { [id]: watch }
 //   history:<id>       -> [{ t, text, html? }] oldest first
@@ -11,7 +13,13 @@ const LOG_LIMIT = 50;
 
 export const DEFAULT_SETTINGS = {
   errorAlerts: { enabled: true, after: 5, minIntervalMinutes: 15 },
+  // 'instant' sends each alert as it happens; 'digest' combines them into one
+  // notification at most every digestEveryMinutes.
+  delivery: { mode: 'instant', digestEveryMinutes: 180 },
+  // No notifications or sounds in this window; held alerts go out after it.
+  quietHours: { enabled: false, days: [0, 1, 2, 3, 4, 5, 6], start: '22:00', end: '07:00' },
 };
+export const DIGEST_CHOICES = [30, 60, 180, 360, 720, 1440];
 
 let queue = Promise.resolve();
 
@@ -79,19 +87,24 @@ export function appendLog(id, entry) {
 
 export async function getSettings() {
   const { settings } = await chrome.storage.local.get('settings');
-  return {
-    errorAlerts: { ...DEFAULT_SETTINGS.errorAlerts, ...(settings?.errorAlerts || {}) },
-  };
+  return sanitizeSettings(settings);
 }
 
 export function sanitizeSettings(input) {
   const e = input?.errorAlerts || {};
-  const int = (v, min, max, d) => (Number.isFinite(Number(v)) ? Math.min(max, Math.max(min, Math.round(Number(v)))) : d);
+  const d = input?.delivery || {};
+  const int = (v, min, max, def) => (v !== null && v !== '' && Number.isFinite(Number(v)) ? Math.min(max, Math.max(min, Math.round(Number(v)))) : def);
   return {
     errorAlerts: {
       enabled: e.enabled !== false,
       after: int(e.after, 1, 100, DEFAULT_SETTINGS.errorAlerts.after),
       minIntervalMinutes: int(e.minIntervalMinutes, 1, 1440, DEFAULT_SETTINGS.errorAlerts.minIntervalMinutes),
     },
+    delivery: {
+      mode: d.mode === 'digest' ? 'digest' : 'instant',
+      digestEveryMinutes: DIGEST_CHOICES.includes(Number(d.digestEveryMinutes))
+        ? Number(d.digestEveryMinutes) : DEFAULT_SETTINGS.delivery.digestEveryMinutes,
+    },
+    quietHours: cleanWindow(input?.quietHours, DEFAULT_SETTINGS.quietHours),
   };
 }

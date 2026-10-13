@@ -17,7 +17,7 @@ const { chromium } = require(process.env.PLAYWRIGHT || 'playwright');
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const extDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opw-ext-'));
-for (const item of ['manifest.json', 'src', 'icons']) fs.cpSync(path.join(root, item), path.join(extDir, item), { recursive: true });
+for (const item of ['manifest.json', 'managed_schema.json', 'src', 'icons']) fs.cpSync(path.join(root, item), path.join(extDir, item), { recursive: true });
 const manifest = JSON.parse(fs.readFileSync(path.join(extDir, 'manifest.json')));
 manifest.host_permissions = ['http://127.0.0.1/*'];
 fs.writeFileSync(path.join(extDir, 'manifest.json'), JSON.stringify(manifest));
@@ -386,6 +386,96 @@ try {
       return isDue({ ...watches[id], lastCheckedAt: 0, nextCheckAt: 0 }, Date.now());
     }, res.id);
     assert.equal(due, false);
+  });
+
+  await step('ignoring numbers stops false alerts from counters', async () => {
+    const watch = (ignore) => ({ url: `${base}/links`, selectors: [{ type: 'css', expr: '.ad' }], ignore });
+    const noisy = (await send({ type: 'createWatch', watch: watch({}) })).id;
+    const quiet = (await send({ type: 'createWatch', watch: watch({ numbers: true }) })).id;
+    await waitFor(async () => (await history(noisy)).length === 1 && (await history(quiet)).length === 1);
+    await new Promise((r) => setTimeout(r, 5));
+    await send({ type: 'checkNow', id: noisy });
+    await send({ type: 'checkNow', id: quiet });
+    assert.equal((await history(noisy)).length, 2);
+    assert.equal((await history(quiet)).length, 1);
+    await send({ type: 'bulk', ids: [noisy, quiet], action: 'delete' });
+  });
+
+  await step('changes get a plain summary and number history chart', async () => {
+    price = '$10';
+    const id = (await send({ type: 'createWatch', watch: { url: `${base}/product`, selectors: [{ type: 'css', expr: '#price' }] } })).id;
+    await waitFor(async () => (await history(id)).length === 1);
+    for (const p of ['$12', '$8']) {
+      price = p;
+      await send({ type: 'checkNow', id });
+    }
+    assert.equal((await watchOf(id)).lastSummary, 'Went down from $12 to $8 (−33.3%)');
+    await page.evaluate(() => { location.hash = '#/'; });
+    await page.evaluate((i) => { location.hash = `#/w/${i}`; }, id);
+    await waitFor(async () => (await watchOf(id)).unread === false);
+    await page.waitForTimeout(300); // let the re-render after marking it read settle
+    await waitFor(async () => (await page.locator('.num-chart .dot').count()) === 3);
+    assert.match(await page.textContent('.summary'), /Went down from \$12 to \$8/);
+    assert.equal(await page.locator('.num-table tbody tr').count(), 3);
+    await page.focus('.num-chart');
+    await page.keyboard.press('ArrowLeft'); // starts at the latest version
+    await page.keyboard.press('ArrowLeft');
+    assert.match(await page.textContent('.num-tip'), /^12 \(\+2\)/);
+    await page.evaluate(() => { location.hash = '#/'; });
+    await send({ type: 'deleteWatch', id });
+  });
+
+  const notificationIds = async () => Object.keys(await sw.evaluate(() => new Promise((r) => chrome.notifications.getAll(r))));
+  const clearNotifications = () => sw.evaluate(async () => {
+    const all = await new Promise((r) => chrome.notifications.getAll(r));
+    await Promise.all(Object.keys(all).map((id) => chrome.notifications.clear(id)));
+  });
+  const pending = () => page.evaluate(async () => (await chrome.storage.local.get('pendingAlerts')).pendingAlerts || []);
+
+  await step('quiet hours hold alerts and send them when they end', async () => {
+    await page.evaluate(() => { location.hash = '#/'; });
+    const allDays = [0, 1, 2, 3, 4, 5, 6];
+    await send({ type: 'saveSettings', settings: { quietHours: { enabled: true, days: allDays, start: '00:00', end: '00:00' } } });
+    price = '$20';
+    const id = (await send({ type: 'createWatch', watch: { url: `${base}/product`, name: 'Quiet', selectors: [{ type: 'css', expr: '#price' }] } })).id;
+    await waitFor(async () => (await history(id)).length === 1);
+    await clearNotifications();
+    price = '$15';
+    await send({ type: 'checkNow', id });
+    assert.equal((await watchOf(id)).unread, true, 'change is still recorded');
+    const held = await pending();
+    assert.equal(held.length, 1);
+    assert.equal(held[0].summary, 'Went down from $20 to $15 (−25.0%)');
+    assert.equal((await notificationIds()).some((n) => n.includes(id)), false, 'no notification during quiet hours');
+
+    await send({ type: 'saveSettings', settings: {} }); // quiet hours off
+    assert.equal((await pending()).length, 0);
+    assert.ok((await notificationIds()).some((n) => n.startsWith(`watch:${id}:`)), 'held alert sent afterwards');
+    await send({ type: 'deleteWatch', id });
+  });
+
+  await step('combined alerts bundle several changes into one notification', async () => {
+    await send({ type: 'saveSettings', settings: { delivery: { mode: 'digest', digestEveryMinutes: 30 } } });
+    await page.evaluate(() => chrome.storage.local.set({ lastDigestAt: Date.now() }));
+    price = '$30';
+    const ids = [];
+    for (const name of ['One', 'Two']) {
+      ids.push((await send({ type: 'createWatch', watch: { url: `${base}/product`, name, selectors: [{ type: 'css', expr: '#price' }] } })).id);
+    }
+    await waitFor(async () => (await history(ids[0])).length === 1 && (await history(ids[1])).length === 1);
+    await clearNotifications();
+    price = '$25';
+    for (const id of ids) await send({ type: 'checkNow', id });
+    assert.deepEqual((await pending()).map((p) => p.name).sort(), ['One', 'Two']);
+    assert.equal((await notificationIds()).length, 0, 'nothing sent before the summary is due');
+
+    await page.evaluate(() => chrome.storage.local.set({ lastDigestAt: 0 }));
+    await send({ type: 'saveSettings', settings: { delivery: { mode: 'digest', digestEveryMinutes: 30 } } });
+    const sent = await notificationIds();
+    assert.equal(sent.length, 1);
+    assert.match(sent[0], /^digest:/);
+    await send({ type: 'saveSettings', settings: {} });
+    await send({ type: 'bulk', ids, action: 'delete' });
   });
 
   await step('live mode re-reads an open tab when it changes', async () => {
