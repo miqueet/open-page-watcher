@@ -17,7 +17,7 @@ const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 const out = path.join(root, 'store');
 fs.mkdirSync(out, { recursive: true });
 const extDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opw-ext-'));
-for (const item of ['manifest.json', 'src', 'icons']) fs.cpSync(path.join(root, item), path.join(extDir, item), { recursive: true });
+for (const item of ['manifest.json', 'managed_schema.json', 'src', 'icons']) fs.cpSync(path.join(root, item), path.join(extDir, item), { recursive: true });
 const manifest = JSON.parse(fs.readFileSync(path.join(extDir, 'manifest.json')));
 manifest.host_permissions = ['http://*.example.com/*'];
 fs.writeFileSync(path.join(extDir, 'manifest.json'), JSON.stringify(manifest));
@@ -94,11 +94,23 @@ try {
   });
   for (let i = 0; i < 100 && (await histories()) < 3; i++) await inbox.waitForTimeout(100);
 
+  for (const p of ['$1,249.00', '$1,349.00', '$1,199.00']) {
+    price = p;
+    await check(laptop);
+  }
   price = '$1,149.00';
   stock = 'In stock';
   jobs = [...jobs, 'Staff Platform Engineer, Remote'];
   await check(laptop);
   await check(careers);
+  // Spread the laptop's versions over the past two weeks for the chart.
+  await inbox.evaluate(async (id) => {
+    const key = `history:${id}`;
+    const h = (await chrome.storage.local.get(key))[key];
+    const now = Date.now();
+    h.forEach((v, i) => { v.t = now - (h.length - 1 - i) * 3.2 * 864e5 - 3 * 3600e3; });
+    await chrome.storage.local.set({ [key]: h });
+  }, laptop);
 
   await inbox.evaluate((id) => { location.hash = `#/w/${id}`; }, careers);
   await inbox.waitForSelector('.diff .add, .diff ins');
@@ -125,6 +137,15 @@ try {
   await inbox.waitForSelector('form');
   await inbox.waitForTimeout(300);
   await inbox.screenshot({ path: path.join(out, 'screenshot-3-options.png') });
+
+  await inbox.evaluate(() => chrome.runtime.sendMessage({ type: 'saveSettings', settings: {
+    delivery: { mode: 'digest', digestEveryMinutes: 180 },
+    quietHours: { enabled: true, days: [0, 1, 2, 3, 4, 5, 6], start: '22:00', end: '07:00' },
+  } }));
+  await inbox.evaluate(() => { location.hash = '#/settings'; });
+  await inbox.waitForSelector('form');
+  await inbox.waitForTimeout(300);
+  await inbox.screenshot({ path: path.join(out, 'screenshot-4-alerts.png') });
 } finally {
   await context.close();
   server.close();
