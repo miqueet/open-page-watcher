@@ -40,7 +40,9 @@ deliberately left out, and the full security model.
 2. Open `chrome://extensions` and turn on **Developer mode**.
 3. Click **Load unpacked** and choose the unzipped folder (the one that contains `manifest.json`).
 
-Each release also has a `.sha256` file so you can check the zip wasn't altered.
+Each release also has a `.sha256` file so you can check the zip wasn't altered,
+and a `-chrome-web-store.zip` ready to upload to the Chrome Web Store (see
+[docs/chrome-web-store.md](docs/chrome-web-store.md)).
 
 Managed work machines sometimes block unpacked extensions. In that case your IT
 team can review this repository and publish it internally or allow-list it.
@@ -72,6 +74,10 @@ team can review this repository and publish it internally or allow-list it.
 npm test                    # unit tests, no dependencies needed
 PLAYWRIGHT=$(npm root -g)/playwright node test/e2e.mjs   # browser tests (needs Playwright + Chromium)
 ```
+
+## Privacy
+
+Nothing leaves your browser. See [PRIVACY.md](PRIVACY.md).
 
 ## License
 
