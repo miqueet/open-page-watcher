@@ -1,5 +1,8 @@
 name: release
+# Publishes a release for the version in manifest.json. Run it from the
+# Actions tab ("Run workflow"), or push a matching tag such as v0.1.0.
 on:
+  workflow_dispatch:
   push:
     tags: ['v*']
 permissions:
@@ -12,14 +15,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Tag matches manifest version
+      - name: Release tag from manifest version
         run: |
-          version=$(node -p "require('./manifest.json').version")
-          test "v$version" = "$GITHUB_REF_NAME" || { echo "Tag $GITHUB_REF_NAME does not match manifest version $version"; exit 1; }
+          tag="v$(node -p "require('./manifest.json').version")"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "$tag" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match manifest version $tag"; exit 1
+          fi
+          echo "TAG=$tag" >> "$GITHUB_ENV"
       - run: npm test
       - name: Build zip
         run: |
-          name="open-page-watcher-$GITHUB_REF_NAME"
+          name="open-page-watcher-$TAG"
           mkdir -p "dist/$name"
           cp -r manifest.json src icons LICENSE README.md "dist/$name/"
           (cd dist && zip -rq "$name.zip" "$name" && sha256sum "$name.zip" > "$name.zip.sha256")
@@ -27,7 +33,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          name="open-page-watcher-$GITHUB_REF_NAME"
+          name="open-page-watcher-$TAG"
           cat > notes.md <<NOTES
           ## Install
 
@@ -41,5 +47,5 @@ jobs:
           sha256sum -c $name.zip.sha256
           \`\`\`
           NOTES
-          gh release create "$GITHUB_REF_NAME" "dist/$name.zip" "dist/$name.zip.sha256" \
-            --title "Open Page Watcher $GITHUB_REF_NAME" --notes-file notes.md --generate-notes
+          gh release create "$TAG" "dist/$name.zip" "dist/$name.zip.sha256" \
+            --target "$GITHUB_SHA" --title "Open Page Watcher $TAG" --notes-file notes.md --generate-notes
