@@ -78,10 +78,6 @@ export function changedText(oldText, newText) {
   return { added: added.filter(Boolean).join('\n'), deleted: deleted.filter(Boolean).join('\n') };
 }
 
-export function addedText(oldText, newText) {
-  return changedText(oldText, newText).added;
-}
-
 // Converts the v0.1 single condition ({ type, value }) into the rule-list form.
 export function normalizeCondition(condition) {
   if (condition && Array.isArray(condition.rules)) {
@@ -176,8 +172,3 @@ export function conditionMet(condition, oldText, newText, earlierTexts = [oldTex
   };
   return match === 'any' ? rules.some((r) => ruleMet(r, ctx)) : rules.every((r) => ruleMet(r, ctx));
 }
-
-// Single-rule list used by the v0.1 edit form.
-export const CONDITION_TYPES = Object.fromEntries(
-  Object.entries(RULE_TYPES).map(([k, v]) => [k, { label: v.label, needsValue: Boolean(v.value) }]),
-);
