@@ -1,0 +1,40 @@
+{
+  "type": "object",
+  "properties": {
+    "allowedSites": {
+      "title": "Allowed sites",
+      "description": "If set, only these sites can be watched. An entry like example.com also covers its subdomains.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "blockedSites": {
+      "title": "Blocked sites",
+      "description": "Sites that can never be watched. An entry like example.com also covers its subdomains.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "disableCookies": {
+      "title": "Never send cookies",
+      "description": "Checks never include the user's cookies, so watches can't act as the signed-in user.",
+      "type": "boolean"
+    },
+    "disableRenderInTab": {
+      "title": "Disable render-in-tab mode",
+      "description": "Pages are only downloaded and parsed; their scripts never run.",
+      "type": "boolean"
+    },
+    "disableLiveMode": {
+      "title": "Disable live mode",
+      "description": "The extension never observes open tabs.",
+      "type": "boolean"
+    },
+    "minIntervalMinutes": {
+      "title": "Minimum check interval (minutes)",
+      "type": "integer"
+    },
+    "maxWatches": {
+      "title": "Maximum number of watches",
+      "type": "integer"
+    }
+  }
+}

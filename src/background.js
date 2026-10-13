@@ -1,8 +1,9 @@
 import { extractText } from './lib/extract.js';
 import { conditionMet, addedText } from './lib/conditions.js';
 import { pdfToText } from './lib/pdf.js';
+import { getPolicy, checkSiteAllowed, applyPolicy } from './lib/policy.js';
 import {
-  sanitizeWatch, exportableWatch, postProcess, isDue, nextCheckTime, originPattern, sameDocument,
+  sanitizeWatch, exportableWatch, postProcess, isDue, nextCheckTime, originPattern, sameDocument, comparisonKey,
 } from './lib/watch.js';
 import {
   getWatches, getWatch, updateWatches, getHistory, appendHistory, deleteHistory, appendLog,
@@ -59,11 +60,15 @@ async function checkWatch(id, { via = 'schedule', tabId } = {}) {
   inFlight.add(id);
   const started = Date.now();
   try {
-    const watch = await getWatch(id);
-    if (!watch) return;
+    const stored = await getWatch(id);
+    if (!stored) return;
+    const policy = await getPolicy();
+    const watch = applyPolicy(policy, stored);
+    if (via === 'live' && !watch.live) return;
     let result;
     let error = '';
     try {
+      checkSiteAllowed(policy, watch.url);
       const granted = await chrome.permissions.contains({ origins: [originPattern(watch.url)] });
       if (!granted) throw new Error('Access to this site has not been granted. Open the watch and click Allow.');
       if (via === 'live') result = await extractInTab(tabId, watch);
@@ -102,7 +107,8 @@ async function record(watch, result, error, { via, started }) {
 
   const history = await getHistory(id);
   const previous = history[history.length - 1];
-  const changed = !previous || previous.text !== result.text;
+  const changed = !previous
+    || comparisonKey(previous.text, watch.ignore) !== comparisonKey(result.text, watch.ignore);
   let alert = false;
   if (changed) {
     const entry = { t: now, text: result.text };
@@ -112,7 +118,7 @@ async function record(watch, result, error, { via, started }) {
       logEntry.changed = true;
       alert = conditionMet(watch.condition, previous.text, result.text, history.map((h) => h.text));
     }
-  } else if (result.html && !previous.html) {
+  } else if (result.html && !previous.html && previous.text === result.text) {
     // Backfill the HTML of the current version so the visual view works.
     await serialize(async () => {
       const key = `history:${id}`;
@@ -321,7 +327,7 @@ function liveCheck(id, tabId) {
 chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
   if (info.status !== 'complete' || !tab.url?.startsWith('http') || renderTabs.has(tabId)) return;
   const live = Object.values(await getWatches()).filter((w) => w.live && !w.paused && sameDocument(w.url, tab.url));
-  if (!live.length) return;
+  if (!live.length || (await getPolicy()).disableLiveMode) return;
   if (!(await chrome.permissions.contains({ origins: [originPattern(tab.url)] }))) return;
   await chrome.scripting.executeScript({ target: { tabId }, files: ['src/live.js'] }).catch(() => {});
   for (const w of live) liveCheck(w.id, tabId);
@@ -462,12 +468,26 @@ async function releaseUnusedOrigins(removedUrls) {
 // ---------------------------------------------------------------------------
 // Messages
 
+// Applies organization policy to a watch being saved. Throws if the site isn't
+// allowed or a new watch would exceed the limit.
+async function enforcePolicy(watch, { adding = 0 } = {}) {
+  const policy = await getPolicy();
+  checkSiteAllowed(policy, watch.url);
+  if (adding && policy.maxWatches) {
+    const count = Object.keys(await getWatches()).length;
+    if (count + adding > policy.maxWatches) {
+      throw new Error(`Your organization allows at most ${policy.maxWatches} watches`);
+    }
+  }
+  return applyPolicy(policy, watch);
+}
+
 // Changing any of these makes earlier versions incomparable with new ones.
 const CONTENT_FIELDS = ['url', 'selectors', 'excludes', 'regexFilter', 'mode', 'includeFrames'];
 
 const uiHandlers = {
   async createWatch({ watch }) {
-    const clean = sanitizeWatch(watch);
+    const clean = await enforcePolicy(sanitizeWatch(watch), { adding: 1 });
     await updateWatches((all) => {
       all[clean.id] = clean;
     });
@@ -478,7 +498,7 @@ const uiHandlers = {
   async updateWatch({ watch }) {
     const before = await getWatch(watch?.id);
     if (!before) throw new Error('Watch not found');
-    const clean = sanitizeWatch(watch, before);
+    const clean = await enforcePolicy(sanitizeWatch(watch, before));
     const reset = CONTENT_FIELDS.some((f) => JSON.stringify(before[f]) !== JSON.stringify(clean[f]));
     const rescheduled = before.intervalMinutes !== clean.intervalMinutes
       || JSON.stringify(before.schedule) !== JSON.stringify(clean.schedule);
@@ -579,7 +599,7 @@ const uiHandlers = {
     const skipped = [];
     for (const raw of data.watches.slice(0, 1000)) {
       try {
-        const w = sanitizeWatch({ ...raw, id: existing[raw?.id] ? undefined : raw?.id });
+        const w = await enforcePolicy(sanitizeWatch({ ...raw, id: existing[raw?.id] ? undefined : raw?.id }), { adding: imported.length + 1 });
         imported.push(w);
       } catch (e) {
         skipped.push(`${raw?.name || raw?.url || 'unknown'}: ${e.message}`);
@@ -625,12 +645,12 @@ async function savePickerWatch(message, tab) {
     .map((expr) => ({ type: 'css', expr }));
   const selectors = toSelectors(message.selectors);
   if (!selectors.length) throw new Error('Select at least one element');
-  const watch = sanitizeWatch({
+  const watch = await enforcePolicy(sanitizeWatch({
     url: tab.url,
     name: typeof tab.title === 'string' ? tab.title.slice(0, 200) : '',
     selectors,
     excludes: toSelectors(message.excludes),
-  });
+  }), { adding: 1 });
   // If site access hasn't been granted yet, the watch is still saved; its first
   // check reports the missing access and the inbox offers to grant it.
   await updateWatches((all) => {

@@ -132,6 +132,12 @@ export function sanitizeWatch(input, existing = {}) {
     sound: src.sound === true,
     paused: src.paused === true,
     labels: cleanLabels(src.labels),
+    ignore: {
+      case: src.ignore?.case === true,
+      whitespace: src.ignore?.whitespace === true,
+      numbers: src.ignore?.numbers === true,
+      dates: src.ignore?.dates === true,
+    },
     // Runtime state (preserved from existing, never trusted from imports).
     createdAt: Number(existing.createdAt) || Date.now(),
     lastCheckedAt: Number(existing.lastCheckedAt) || 0,
@@ -162,6 +168,27 @@ export function postProcess(text, watch) {
     if (matches.length > 1000) break;
   }
   return matches.join('\n');
+}
+
+const MONTHS = 'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
+const DATE_PATTERNS = [
+  /\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?\b/gi, // ISO
+  /\b\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}\b/g, // 10/13/2026, 13.10.26
+  new RegExp(`\\b(?:${MONTHS})\\.? \\d{1,2}(?:st|nd|rd|th)?,? \\d{4}\\b`, 'gi'), // Oct 13, 2026
+  new RegExp(`\\b\\d{1,2}(?:st|nd|rd|th)? (?:${MONTHS})\\.?,? \\d{4}\\b`, 'gi'), // 13 October 2026
+  /\b\d{1,2}:\d{2}(?::\d{2})?(?:\s?[ap]\.?m\.?)?\b/gi, // 12:25, 3:04:05 pm
+  /\b(?:just now|\d+ (?:seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?) ago)\b/gi, // relative
+];
+
+// The text used to decide whether a page changed, after the watch's
+// "ignore" options. The stored history keeps the real text.
+export function comparisonKey(text, ignore = {}) {
+  let t = text;
+  if (ignore.dates) for (const re of DATE_PATTERNS) t = t.replace(re, '<date>');
+  if (ignore.numbers) t = t.replace(/\d[\d,.]*/g, '<n>');
+  if (ignore.whitespace) t = t.replace(/\s+/g, ' ').trim();
+  if (ignore.case) t = t.toLowerCase();
+  return t;
 }
 
 function minutesOfDay(hhmm) {

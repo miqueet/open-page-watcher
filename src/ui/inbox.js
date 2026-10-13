@@ -6,6 +6,7 @@ import { RULE_TYPES, RULE_SOURCES, normalizeCondition } from '../lib/conditions.
 import { DEFAULT_INTERVAL_MINUTES, DEFAULT_HISTORY } from '../lib/watch.js';
 import { getLog, getSettings } from '../lib/storage.js';
 import { visualDocument, sourceLines } from './visual.js';
+import { getPolicy, isManaged } from '../lib/policy.js';
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -16,6 +17,7 @@ const state = {
   checked: new Set(), // watches ticked for bulk actions
   view: 'text', // text | side | visual | source
   showDeleted: false,
+  policy: null, // organization policy from managed storage
 };
 
 try {
@@ -507,7 +509,13 @@ function watchForm(watch) {
     notify: el('input', { type: 'checkbox', checked: w.notify }),
     sound: el('input', { type: 'checkbox', checked: w.sound }),
     historyLimit: el('input', { type: 'number', min: 2, max: 200, value: String(w.historyLimit) }),
+    ignore: Object.fromEntries(['dates', 'numbers', 'case', 'whitespace'].map((k) => [k, el('input', { type: 'checkbox', checked: w.ignore?.[k] === true })])),
   };
+  const policy = state.policy;
+  if (policy?.disableRenderInTab) f.mode.querySelector('option[value="tab"]').disabled = true;
+  if (policy?.disableLiveMode) f.live.disabled = true;
+  if (policy?.disableCookies) f.sendCookies.disabled = true;
+  if (policy?.minIntervalMinutes) f.every.title = `Your organization requires at least ${policy.minIntervalMinutes} minutes between checks`;
   f.selectors.value = selectorsToText(w.selectors);
   f.excludes.value = selectorsToText(w.excludes || []);
   f.mode.value = w.mode;
@@ -592,6 +600,7 @@ function watchForm(watch) {
         notify: f.notify.checked,
         sound: f.sound.checked,
         historyLimit: Number(f.historyLimit.value),
+        ignore: Object.fromEntries(Object.entries(f.ignore).map(([k, box]) => [k, box.checked])),
       };
       try {
         const { id } = await call(watch ? 'updateWatch' : 'createWatch', { watch: data });
@@ -605,6 +614,7 @@ function watchForm(watch) {
     },
   },
   el('h1', {}, watch ? `Edit ${watch.name}` : 'Add a watch'),
+  policy && isManaged(policy) ? el('p', { class: 'banner' }, 'Some options are set by your organization and can’t be changed here.') : null,
   el('label', { class: 'field' }, el('span', {}, 'Page address'), f.url,
     el('span', { class: 'hint' }, 'Web pages, JSON, plain text, PDF files, RSS/Atom feeds and XML sitemaps are supported.')),
   el('label', { class: 'field' }, el('span', {}, 'Name'), f.name),
@@ -614,7 +624,13 @@ function watchForm(watch) {
       el('span', { class: 'hint' }, 'One CSS selector per line. Start a line with xpath: for XPath. End a line with @href, @src or another attribute name to watch that attribute instead of the text. The "Select parts of page" button in the toolbar popup fills this in for you.')),
     el('label', { class: 'field' }, el('span', {}, 'Leave out'), f.excludes,
       el('span', { class: 'hint' }, 'Selectors for parts to ignore, such as ads or timestamps.')),
-    el('label', { class: 'field' }, el('span', {}, 'Keep only text matching this regular expression'), f.regexFilter)),
+    el('label', { class: 'field' }, el('span', {}, 'Keep only text matching this regular expression'), f.regexFilter),
+    el('div', { class: 'field' }, el('span', {}, 'Don’t count it as a change when only these differ'),
+      el('div', { class: 'days' },
+        el('label', {}, f.ignore.dates, 'Dates and times'),
+        el('label', {}, f.ignore.numbers, 'Numbers'),
+        el('label', {}, f.ignore.case, 'Upper/lower case'),
+        el('label', {}, f.ignore.whitespace, 'Spacing')))),
   el('fieldset', {}, el('legend', {}, 'When to check'),
     el('div', { class: 'inline' }, f.scheduleType, f.every, f.unit, randomRow),
     el('label', { class: 'check' }, f.windowOn, el('span', {}, 'Only check during certain hours')),
@@ -725,7 +741,7 @@ $('import-file').addEventListener('change', async (e) => {
 
 let renderQueued = false;
 async function refresh() {
-  state.watches = await getWatches();
+  [state.watches, state.policy] = await Promise.all([getWatches(), getPolicy()]);
   render();
 }
 
@@ -736,6 +752,10 @@ function render() {
   if ((edit || isNew || settings) && $('detail').querySelector('form') && document.activeElement?.closest('form')) return;
   renderDetail();
 }
+
+chrome.storage.onChanged.addListener((_, area) => {
+  if (area === 'managed') refresh();
+});
 
 onChanged(() => {
   if (renderQueued) return;
