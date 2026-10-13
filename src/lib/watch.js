@@ -1,4 +1,4 @@
-import { CONDITION_TYPES } from './conditions.js';
+import { normalizeCondition } from './conditions.js';
 
 export const MIN_INTERVAL_MINUTES = 1;
 export const MAX_INTERVAL_MINUTES = 7 * 24 * 60;
@@ -47,10 +47,12 @@ export function sanitizeWatch(input, existing = {}) {
         .map((s) => ({ type: s.type === 'xpath' ? 'xpath' : 'css', expr: str(s.expr).trim() }))
     : [];
 
-  const condType = CONDITION_TYPES[src.condition?.type] ? src.condition.type : 'any';
+  const condition = normalizeCondition(src.condition);
   const regexFilter = str(src.regexFilter);
   if (regexFilter) new RegExp(regexFilter); // throws a readable SyntaxError if invalid
-  if (condType === 'regex') new RegExp(str(src.condition?.value));
+  for (const rule of condition.rules) {
+    if (rule.type === 'regex' || rule.type === 'notRegex') new RegExp(rule.value);
+  }
 
   return {
     id: typeof src.id === 'string' && /^[a-z0-9-]{1,64}$/i.test(src.id) ? src.id : crypto.randomUUID(),
@@ -63,7 +65,7 @@ export function sanitizeWatch(input, existing = {}) {
     sendCookies: src.sendCookies === true,
     intervalMinutes: clampInt(src.intervalMinutes, MIN_INTERVAL_MINUTES, MAX_INTERVAL_MINUTES, DEFAULT_INTERVAL_MINUTES),
     historyLimit: clampInt(src.historyLimit, 2, MAX_HISTORY, DEFAULT_HISTORY),
-    condition: { type: condType, value: str(src.condition?.value) },
+    condition,
     notify: src.notify !== false,
     sound: src.sound === true,
     paused: src.paused === true,
