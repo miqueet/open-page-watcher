@@ -33,10 +33,18 @@ export function extractText(spec, doc = document) {
     return Array.from(doc.querySelectorAll(sel.expr));
   }
 
+  // Form fields can hold what the user typed into an open tab (live mode), so
+  // only their page-supplied attributes are read, and password fields never.
+  const FORM_FIELDS = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
+  const tagOf = (node) => String(node.tagName || '').toUpperCase();
+  const isSecret = (node) => tagOf(node) === 'INPUT' && /^(password|hidden|file)$/i.test(node.getAttribute('type') || '');
+
   function attrOf(node, name) {
+    if (node.nodeType === 1 && isSecret(node)) return '';
     let value = node.getAttribute ? node.getAttribute(name) : null;
-    if (value === null && name in node && typeof node[name] !== 'object' && typeof node[name] !== 'function') {
-      value = String(node[name]); // a live property such as value or checked
+    if (value === null && name in node && !FORM_FIELDS.has(tagOf(node))
+      && typeof node[name] !== 'object' && typeof node[name] !== 'function') {
+      value = String(node[name]); // a live property such as an image's currentSrc
     }
     if (value === null) return '';
     if (URL_ATTRS.has(name.toLowerCase()) && spec && spec.baseUrl) {
@@ -64,7 +72,7 @@ export function extractText(spec, doc = document) {
       }
       if (node.nodeType !== 1) return;
       const tag = node.tagName.toUpperCase();
-      if (SKIP.has(tag)) return;
+      if (SKIP.has(tag) || isSecret(node)) return;
       const name = node.tagName.toLowerCase();
       let open = '<' + name;
       for (const a of node.attributes) {
@@ -101,8 +109,12 @@ export function extractText(spec, doc = document) {
       if (node.nodeType !== 1 && node.nodeType !== 9 && node.nodeType !== 11) return;
       const tag = node.nodeType === 1 ? node.tagName.toUpperCase() : '';
       if (SKIP.has(tag)) return;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') {
-        out.push(' ' + (node.value ?? node.getAttribute('value') ?? '') + ' ');
+      if (tag === 'INPUT') {
+        if (!isSecret(node)) out.push(' ' + (node.getAttribute('value') ?? '') + ' ');
+        return;
+      }
+      if (tag === 'TEXTAREA') {
+        out.push(' ' + (node.defaultValue ?? node.textContent ?? '') + ' ');
         return;
       }
       if (tag === 'IMG' && node.getAttribute('alt')) out.push(' ' + node.getAttribute('alt') + ' ');

@@ -703,7 +703,7 @@ function watchForm(watch) {
     el('label', { class: 'check' }, f.notify, el('span', {}, 'Desktop notification')),
     el('label', { class: 'check' }, f.sound, el('span', {}, 'Play a sound')),
     el('label', { class: 'check' }, f.speak, el('span', {}, 'Read the change aloud',
-      el('div', { class: 'hint' }, 'Uses your computer’s built-in voices.'))),
+      el('div', { class: 'hint' }, 'Only voices installed on this computer are used, never online voices.'))),
     el('label', { class: 'field' }, el('span', {}, 'Versions to keep'), f.historyLimit)),
   error,
   el('div', { class: 'row' },

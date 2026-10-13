@@ -502,8 +502,21 @@ async function notify(alerts, now) {
     const text = spoken.length > 3
       ? `${spoken.length} watches changed.`
       : spoken.map((a) => `${a.name} changed. ${a.summary}`).join(' ');
-    chrome.tts.speak(text.slice(0, 500), { enqueue: true });
+    await speakLocally(text.slice(0, 500));
   }
+}
+
+// Some of Chrome's voices are online services that would receive the text,
+// so only a voice that runs on this computer is used. With none, stay quiet.
+async function speakLocally(text) {
+  const voices = await chrome.tts.getVoices();
+  const lang = navigator.language || 'en-US';
+  const local = voices.filter((v) => v.remote === false && v.voiceName);
+  const voice = local.find((v) => v.lang === lang)
+    || local.find((v) => v.lang?.split('-')[0] === lang.split('-')[0])
+    || local[0];
+  if (!voice) return;
+  chrome.tts.speak(text, { voiceName: voice.voiceName, enqueue: true });
 }
 
 // Tells the user once a watch has failed several checks in a row, then at

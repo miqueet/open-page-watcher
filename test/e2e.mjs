@@ -80,7 +80,13 @@ const server = http.createServer((req, res) => {
   }
   if (req.url === '/live') {
     res.setHeader('content-type', 'text/html');
-    return res.end(`<!doctype html><title>Live</title><p id="n">0</p>`);
+    return res.end(`<!doctype html><title>Live</title><p id="n">0</p>
+      <input id="q" value="default"><input id="pw" type="password" value="server-secret">`);
+  }
+  if (req.url === '/doc.pdf' || req.url === '/download?id=7') {
+    // The second address serves the PDF with a generic type, like many download links.
+    res.setHeader('content-type', req.url === '/doc.pdf' ? 'application/pdf' : 'application/octet-stream');
+    return res.end(fs.readFileSync(path.join(root, 'test/fixtures/standard.pdf')));
   }
   if (req.url === '/tracker.png') trackerHits++;
   res.statusCode = 404;
@@ -366,6 +372,16 @@ try {
     assert.ok((await page.textContent('table.log')).includes('Changed'));
   });
 
+  await step('PDF files are read as text', async () => {
+    for (const url of [`${base}/doc.pdf`, `${base}/download?id=7`]) {
+      const res = await send({ type: 'createWatch', watch: { url } });
+      const h = await waitFor(async () => (await history(res.id))[0]);
+      assert.match(h.text, /^Quarterly Report\nThe quick brown fox jumps over the lazy dog\./);
+      assert.match(h.text, /Café, naïve façade/);
+      await send({ type: 'deleteWatch', id: res.id });
+    }
+  });
+
   await step('RSS, Atom and sitemaps become one line per entry', async () => {
     const rss = await send({ type: 'createWatch', watch: { url: `${base}/feed.xml`, condition: { rules: [{ type: 'contains', on: 'added', value: 'third' }] } } });
     const atom = await send({ type: 'createWatch', watch: { url: `${base}/atom.xml` } });
@@ -535,14 +551,18 @@ try {
   await step('spoken alerts read the change aloud', async () => {
     await sw.evaluate(() => {
       self.spoken = [];
-      chrome.tts.speak = (text) => self.spoken.push(text);
+      chrome.tts.getVoices = async () => [
+        { voiceName: 'Online voice', lang: 'en-US', remote: true },
+        { voiceName: 'Local voice', lang: 'en-US', remote: false },
+      ];
+      chrome.tts.speak = (text, options) => self.spoken.push(`${options.voiceName}: ${text}`);
     });
     price = '$40';
     const id = (await send({ type: 'createWatch', watch: { url: `${base}/product`, name: 'Spoken', notify: false, speak: true, selectors: [{ type: 'css', expr: '#price' }] } })).id;
     await waitFor(async () => (await history(id)).length === 1);
     price = '$45';
     await send({ type: 'checkNow', id });
-    assert.deepEqual(await sw.evaluate(() => self.spoken), ['Spoken changed. Went up from $40 to $45 (+12.5%)']);
+    assert.deepEqual(await sw.evaluate(() => self.spoken), ['Local voice: Spoken changed. Went up from $40 to $45 (+12.5%)']);
     await send({ type: 'deleteWatch', id });
   });
 
@@ -579,6 +599,18 @@ try {
     await tab.evaluate(() => { document.getElementById('n').textContent = '42'; });
     const h = await waitFor(async () => { const x = await history(res.id); return x.length >= 2 && x; }, 20000);
     assert.equal(h[h.length - 1].text, '42');
+
+    // A whole-page live watch never records what the user types, or passwords.
+    const whole = await send({ type: 'createWatch', watch: { url: `${base}/live`, live: true } });
+    await waitFor(async () => (await history(whole.id))[0]);
+    await tab.fill('#q', 'typed by me');
+    await tab.fill('#pw', 'hunter2');
+    await tab.evaluate(() => { document.getElementById('n').textContent = '43'; });
+    const w = await waitFor(async () => { const x = await history(whole.id); return x.length >= 2 && x; }, 20000);
+    const last = w[w.length - 1];
+    assert.match(last.text, /43/);
+    assert.match(last.text, /default/);
+    assert.ok(!/typed by me|hunter2|server-secret/.test(last.text + (last.html || '')), 'typed values and passwords are not recorded');
     const log = await page.evaluate(async (k) => (await chrome.storage.local.get(k))[k], `log:${res.id}`);
     assert.ok(log.some((e) => e.via === 'live'));
     await tab.close();
