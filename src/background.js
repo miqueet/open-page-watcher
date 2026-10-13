@@ -449,16 +449,16 @@ function ensureOffscreen() {
 
 // Sends the alert now, or holds it for quiet hours or the combined summary.
 async function deliverAlert(watch, oldText, newText) {
-  if (!watch.notify && !watch.sound) return;
+  if (!watch.notify && !watch.sound && !watch.speak) return;
   const summary = summarizeChange(oldText, newText);
   const now = Date.now();
   if (!shouldHold(await getSettings(), now)) {
-    await notify([{ id: watch.id, name: watch.name, summary, t: now, count: 1, notify: watch.notify, sound: watch.sound }], now);
+    await notify([{ id: watch.id, name: watch.name, summary, t: now, count: 1, notify: watch.notify, sound: watch.sound, speak: watch.speak }], now);
     return;
   }
   await serialize(async () => {
     const { pendingAlerts = [] } = await chrome.storage.local.get('pendingAlerts');
-    const alert = { id: watch.id, name: watch.name, summary, t: now, notify: watch.notify, sound: watch.sound };
+    const alert = { id: watch.id, name: watch.name, summary, t: now, notify: watch.notify, sound: watch.sound, speak: watch.speak };
     await chrome.storage.local.set({ pendingAlerts: queueAlert(pendingAlerts, alert) });
   });
   await flushAlerts(now);
@@ -496,6 +496,13 @@ async function notify(alerts, now) {
   if (alerts.some((a) => a.sound)) {
     await ensureOffscreen();
     await chrome.runtime.sendMessage({ target: 'offscreen', type: 'beep' }).catch(() => {});
+  }
+  const spoken = alerts.filter((a) => a.speak);
+  if (spoken.length) {
+    const text = spoken.length > 3
+      ? `${spoken.length} watches changed.`
+      : spoken.map((a) => `${a.name} changed. ${a.summary}`).join(' ');
+    chrome.tts.speak(text.slice(0, 500), { enqueue: true });
   }
 }
 
@@ -657,6 +664,19 @@ const uiHandlers = {
     }
     await broadcast({ type: 'changed', id: clean.id });
     return { id: clean.id };
+  },
+
+  async duplicateWatch({ id }) {
+    const source = await getWatch(id);
+    if (!source) throw new Error('Watch not found');
+    const copy = await enforcePolicy(sanitizeWatch({
+      ...exportableWatch(source), id: undefined, name: `${source.name} (copy)`.slice(0, 200),
+    }), { adding: 1 });
+    await updateWatches((all) => {
+      all[copy.id] = copy;
+    });
+    checkWatch(copy.id);
+    return { id: copy.id };
   },
 
   async deleteWatch({ id }) {

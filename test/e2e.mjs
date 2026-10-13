@@ -532,6 +532,44 @@ try {
     await send({ type: 'bulk', ids, action: 'delete' });
   });
 
+  await step('spoken alerts read the change aloud', async () => {
+    await sw.evaluate(() => {
+      self.spoken = [];
+      chrome.tts.speak = (text) => self.spoken.push(text);
+    });
+    price = '$40';
+    const id = (await send({ type: 'createWatch', watch: { url: `${base}/product`, name: 'Spoken', notify: false, speak: true, selectors: [{ type: 'css', expr: '#price' }] } })).id;
+    await waitFor(async () => (await history(id)).length === 1);
+    price = '$45';
+    await send({ type: 'checkNow', id });
+    assert.deepEqual(await sw.evaluate(() => self.spoken), ['Spoken changed. Went up from $40 to $45 (+12.5%)']);
+    await send({ type: 'deleteWatch', id });
+  });
+
+  await step('quick-fill presets, duplicate and keyboard navigation', async () => {
+    await page.evaluate(() => { location.hash = '#/new'; });
+    await page.click('.presets button:text("All links")');
+    assert.equal(await page.inputValue('textarea'), 'a[href] @href');
+
+    const id = (await send({ type: 'createWatch', watch: { url: `${base}/links`, name: 'Links', selectors: [{ type: 'css', expr: 'a[href]', attr: 'href' }] } })).id;
+    const h = await waitFor(async () => (await history(id))[0]);
+    assert.match(h.text, new RegExp(`^${base}/files/v\\d+\\.zip$`));
+    const copy = await send({ type: 'duplicateWatch', id });
+    const dup = await watchOf(copy.id);
+    assert.equal(dup.name, 'Links (copy)');
+    assert.deepEqual(dup.selectors, [{ type: 'css', expr: 'a[href]', attr: 'href' }]);
+
+    await page.evaluate(() => { location.hash = '#/'; });
+    await page.waitForTimeout(200);
+    await page.locator('body').click({ position: { x: 600, y: 400 } });
+    await page.keyboard.press('j');
+    await waitFor(() => page.evaluate(() => location.hash.startsWith('#/w/')));
+    await page.keyboard.press('e');
+    await waitFor(() => page.evaluate(() => location.hash.endsWith('/edit')));
+    await page.evaluate(() => { location.hash = '#/'; });
+    await send({ type: 'bulk', ids: [id, copy.id], action: 'delete' });
+  });
+
   await step('live mode re-reads an open tab when it changes', async () => {
     const res = await send({ type: 'createWatch', watch: { url: `${base}/live`, live: true, selectors: [{ type: 'css', expr: '#n' }] } });
     await waitFor(async () => (await history(res.id))[0]);

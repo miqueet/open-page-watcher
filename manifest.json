@@ -12,7 +12,8 @@
     "offscreen",
     "activeTab",
     "scripting",
-    "contextMenus"
+    "contextMenus",
+    "tts"
   ],
   "optional_host_permissions": [
     "http://*/*",

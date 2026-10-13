@@ -135,6 +135,7 @@ export function sanitizeWatch(input, existing = {}) {
     condition,
     notify: src.notify !== false,
     sound: src.sound === true,
+    speak: src.speak === true,
     paused: src.paused === true,
     labels: cleanLabels(src.labels),
     ignore: {

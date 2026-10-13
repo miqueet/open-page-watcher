@@ -70,7 +70,9 @@ function subtitle(w) {
 function visibleWatches() {
   return state.watches
     .filter(matchesFilter)
-    .sort((a, b) => (b.unread - a.unread) || (b.lastChangedAt - a.lastChangedAt) || a.name.localeCompare(b.name));
+    // Most recently changed first. Not unread-first: reading a watch would
+    // move it and make j/k skip around.
+    .sort((a, b) => (b.lastChangedAt - a.lastChangedAt) || a.name.localeCompare(b.name));
 }
 
 function renderList() {
@@ -220,6 +222,13 @@ async function renderDetail() {
         onclick: () => call('openPage', { id }).catch((err) => toast(err.message)),
       }, 'Open page'),
       el('button', { onclick: () => go(`#/w/${encodeURIComponent(id)}/edit`) }, 'Edit'),
+      el('button', {
+        title: 'Make a copy of this watch, e.g. to watch a similar page',
+        onclick: async () => {
+          const res = await call('duplicateWatch', { id }).catch((err) => toast(err.message));
+          if (res) go(`#/w/${encodeURIComponent(res.id)}/edit`);
+        },
+      }, 'Duplicate'),
       el('button', { onclick: () => call('bulk', { ids: [id], action: watch.paused ? 'resume' : 'pause' }) }, watch.paused ? 'Resume' : 'Pause'),
       el('button', { onclick: () => call('setRead', { id, read: false }) }, 'Mark unread'),
       el('button', {
@@ -487,6 +496,14 @@ function ruleRow(rule, onRemove) {
   return row;
 }
 
+const PRESETS = [
+  ['Whole page', '', 'All the text on the page'],
+  ['All links', 'a[href] @href', 'The address of every link, so new or removed links show up as changes'],
+  ['Page title', 'title', 'The title shown in the browser tab'],
+  ['Headings', 'h1, h2, h3', 'The page’s headings'],
+  ['Description', 'meta[name="description"] @content', 'The page description that search engines show'],
+];
+
 function watchForm(watch) {
   const w = watch || {
     name: '', url: '', selectors: [], excludes: [], regexFilter: '', mode: 'fetch', renderDelaySeconds: 3,
@@ -526,6 +543,7 @@ function watchForm(watch) {
     match: el('select', {}, el('option', { value: 'all' }, 'all'), el('option', { value: 'any' }, 'any')),
     notify: el('input', { type: 'checkbox', checked: w.notify }),
     sound: el('input', { type: 'checkbox', checked: w.sound }),
+    speak: el('input', { type: 'checkbox', checked: w.speak === true }),
     historyLimit: el('input', { type: 'number', min: 2, max: 200, value: String(w.historyLimit) }),
     ignore: Object.fromEntries(['dates', 'numbers', 'case', 'whitespace'].map((k) => [k, el('input', { type: 'checkbox', checked: w.ignore?.[k] === true })])),
   };
@@ -617,6 +635,7 @@ function watchForm(watch) {
         condition: { match: f.match.value, rules: [...rules.children].map((r) => r.read()) },
         notify: f.notify.checked,
         sound: f.sound.checked,
+        speak: f.speak.checked,
         historyLimit: Number(f.historyLimit.value),
         ignore: Object.fromEntries(Object.entries(f.ignore).map(([k, box]) => [k, box.checked])),
       };
@@ -638,6 +657,15 @@ function watchForm(watch) {
   el('label', { class: 'field' }, el('span', {}, 'Name'), f.name),
   el('label', { class: 'field' }, el('span', {}, 'Labels'), f.labels, el('span', { class: 'hint' }, 'Separate labels with commas.')),
   el('fieldset', {}, el('legend', {}, 'What to watch'),
+    el('div', { class: 'presets' }, el('span', { class: 'hint' }, 'Quick fill:'),
+      ...PRESETS.map(([label, text, hint]) => el('button', {
+        type: 'button',
+        title: hint,
+        onclick: () => {
+          f.selectors.value = text;
+          f.selectors.focus();
+        },
+      }, label))),
     el('label', { class: 'field' }, el('span', {}, 'Parts of the page (leave empty for the whole page)'), f.selectors,
       el('span', { class: 'hint' }, 'One CSS selector per line. Start a line with xpath: for XPath. End a line with @href, @src or another attribute name to watch that attribute instead of the text. The "Select parts of page" button in the toolbar popup fills this in for you.')),
     el('label', { class: 'field' }, el('span', {}, 'Leave out'), f.excludes,
@@ -674,6 +702,8 @@ function watchForm(watch) {
     }, '+ Add rule')),
     el('label', { class: 'check' }, f.notify, el('span', {}, 'Desktop notification')),
     el('label', { class: 'check' }, f.sound, el('span', {}, 'Play a sound')),
+    el('label', { class: 'check' }, f.speak, el('span', {}, 'Read the change aloud',
+      el('div', { class: 'hint' }, 'Uses your computer’s built-in voices.'))),
     el('label', { class: 'field' }, el('span', {}, 'Versions to keep'), f.historyLimit)),
   error,
   el('div', { class: 'row' },
@@ -747,6 +777,12 @@ async function settingsForm() {
     el('label', { class: 'check' }, quietOn, el('span', {}, 'No notifications or sounds during these hours',
       el('div', { class: 'hint' }, 'Watches keep checking. What changed is sent as one summary when quiet hours end.'))),
     quietRow),
+  el('fieldset', {}, el('legend', {}, 'Keyboard shortcuts'),
+    el('table', { class: 'log' }, el('tbody', {},
+      ...[['j / k', 'Next / previous watch'], ['e', 'Edit'], ['c', 'Check now'], ['u', 'Mark read or unread'],
+        ['n', 'Add a watch'], ['/', 'Search'], ['Alt+Shift+W', 'Pick parts of the current page to watch (any tab)']]
+        .map(([k, v]) => el('tr', {}, el('td', {}, el('kbd', {}, k)), el('td', {}, v))))),
+    el('p', { class: 'hint' }, 'Change the Alt+Shift+W shortcut at chrome://extensions/shortcuts.')),
   el('fieldset', {}, el('legend', {}, 'Error alerts'),
     el('label', { class: 'check' }, enabled, el('span', {}, 'Notify me when a watch keeps failing')),
     el('div', { class: 'inline' }, 'After', after, 'failed checks in a row, at most every', every, 'minutes')),
@@ -866,6 +902,32 @@ $('import-file').addEventListener('change', async (e) => {
   } catch (err) {
     toast(`Import failed: ${err.message}`);
   }
+});
+
+// Keyboard: j/k move through the list, e edits, c checks now,
+// u toggles read, / searches, n adds a watch.
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.target.closest?.('input, textarea, select, dialog, [contenteditable]')) return;
+  const { id } = route();
+  const list = visibleWatches();
+  const at = list.findIndex((w) => w.id === id);
+  const move = (dir) => {
+    const next = list[Math.min(list.length - 1, Math.max(0, at < 0 ? 0 : at + dir))];
+    if (next) go(`#/w/${encodeURIComponent(next.id)}`);
+  };
+  const current = list[at];
+  const actions = {
+    j: () => move(1),
+    k: () => move(-1),
+    e: () => current && go(`#/w/${encodeURIComponent(current.id)}/edit`),
+    c: () => current && call('checkNow', { id: current.id }).catch((err) => toast(err.message)),
+    u: () => current && call('setRead', { id: current.id, read: current.unread }),
+    n: () => go('#/new'),
+    '/': () => $('search').focus(),
+  };
+  if (!Object.hasOwn(actions, e.key)) return;
+  e.preventDefault();
+  actions[e.key]();
 });
 
 // ---------------------------------------------------------------------------
