@@ -2,19 +2,35 @@ import {
   call, getWatches, getHistory, hasAccess, requestAccess, onChanged, timeAgo, formatInterval, el,
 } from './api.js';
 import { diffText } from '../lib/diff.js';
-import { CONDITION_TYPES } from '../lib/conditions.js';
+import { RULE_TYPES, RULE_SOURCES, normalizeCondition } from '../lib/conditions.js';
 import { DEFAULT_INTERVAL_MINUTES, DEFAULT_HISTORY } from '../lib/watch.js';
+import { getLog, getSettings } from '../lib/storage.js';
+import { visualDocument, sourceLines } from './visual.js';
 
 const $ = (id) => document.getElementById(id);
-const state = { watches: [], filter: 'all', search: '', editing: false };
+const state = {
+  watches: [],
+  filter: 'all',
+  label: null,
+  search: '',
+  checked: new Set(), // watches ticked for bulk actions
+  view: 'text', // text | side | visual | source
+  showDeleted: false,
+};
+
+try {
+  state.view = localStorage.getItem('opw:view') || 'text';
+} catch {
+  // storage unavailable; keep the default
+}
 
 // ---------------------------------------------------------------------------
-// Routing: #/w/<id>, #/w/<id>/edit, #/new
+// Routing: #/w/<id>, #/w/<id>/edit, #/new, #/settings
 
 function route() {
-  const m = /^#\/(?:w\/([^/]+)(\/edit)?|(new))$/.exec(location.hash);
-  if (!m) return { id: null, edit: false, isNew: false };
-  return { id: m[1] ? decodeURIComponent(m[1]) : null, edit: !!m[2], isNew: !!m[3] };
+  const m = /^#\/(?:w\/([^/]+)(\/edit)?|(new)|(settings))$/.exec(location.hash);
+  if (!m) return { id: null, edit: false, isNew: false, settings: false };
+  return { id: m[1] ? decodeURIComponent(m[1]) : null, edit: !!m[2], isNew: !!m[3], settings: !!m[4] };
 }
 
 function go(hash) {
@@ -31,8 +47,10 @@ function matchesFilter(w) {
   if (state.filter === 'unread' && !w.unread) return false;
   if (state.filter === 'errors' && !w.lastError) return false;
   if (state.filter === 'paused' && !w.paused) return false;
+  if (state.label && !w.labels?.includes(state.label)) return false;
   const q = state.search.trim().toLowerCase();
-  return !q || w.name.toLowerCase().includes(q) || w.url.toLowerCase().includes(q);
+  return !q || w.name.toLowerCase().includes(q) || w.url.toLowerCase().includes(q)
+    || (w.labels || []).some((l) => l.toLowerCase().includes(q));
 }
 
 function subtitle(w) {
@@ -42,17 +60,35 @@ function subtitle(w) {
   return el('span', { class: 'sub muted' }, `Checked ${timeAgo(w.lastCheckedAt)}`);
 }
 
-function renderList() {
-  const { id } = route();
-  const items = state.watches
+function visibleWatches() {
+  return state.watches
     .filter(matchesFilter)
     .sort((a, b) => (b.unread - a.unread) || (b.lastChangedAt - a.lastChangedAt) || a.name.localeCompare(b.name));
+}
+
+function renderList() {
+  const { id } = route();
+  const items = visibleWatches();
+  const known = new Set(state.watches.map((w) => w.id));
+  for (const x of state.checked) if (!known.has(x)) state.checked.delete(x);
+
   $('list').replaceChildren(...items.map((w) => el('li', {},
+    el('input', {
+      type: 'checkbox',
+      checked: state.checked.has(w.id),
+      'aria-label': `Select ${w.name}`,
+      onchange: (e) => {
+        if (e.target.checked) state.checked.add(w.id);
+        else state.checked.delete(w.id);
+        renderBulk();
+      },
+    }),
     el('button', {
       class: [w.unread ? 'unread' : '', w.id === id ? 'selected' : ''].join(' '),
       onclick: () => go(`#/w/${encodeURIComponent(w.id)}`),
       title: w.url,
     }, el('span', { class: 'dot' }), el('span', { class: 'name' }, w.name), subtitle(w)))));
+
   const empty = $('list-empty');
   empty.hidden = items.length > 0;
   empty.textContent = state.watches.length
@@ -61,14 +97,63 @@ function renderList() {
   for (const b of document.querySelectorAll('.filters button')) {
     b.classList.toggle('active', b.dataset.filter === state.filter);
   }
+
+  const labels = [...new Set(state.watches.flatMap((w) => w.labels || []))].sort((a, b) => a.localeCompare(b));
+  if (state.label && !labels.includes(state.label)) state.label = null;
+  $('labels').replaceChildren(...labels.map((l) => el('button', {
+    class: `chip ${state.label === l ? 'active' : ''}`,
+    onclick: () => {
+      state.label = state.label === l ? null : l;
+      renderList();
+    },
+  }, l)));
+  renderBulk();
 }
+
+function renderBulk() {
+  const visible = visibleWatches().map((w) => w.id);
+  $('bulk').hidden = state.watches.length === 0;
+  const n = state.checked.size;
+  $('bulk-count').textContent = n ? `${n} selected` : 'Select all';
+  $('select-all').checked = visible.length > 0 && visible.every((x) => state.checked.has(x));
+  $('bulk-action').disabled = n === 0;
+}
+
+$('select-all').addEventListener('change', (e) => {
+  for (const w of visibleWatches()) {
+    if (e.target.checked) state.checked.add(w.id);
+    else state.checked.delete(w.id);
+  }
+  renderList();
+});
+
+$('bulk-action').addEventListener('change', async (e) => {
+  const action = e.target.value;
+  e.target.value = '';
+  const ids = [...state.checked];
+  if (!action || !ids.length) return;
+  let label;
+  if (action === 'addLabel' || action === 'removeLabel') {
+    label = prompt(action === 'addLabel' ? 'Label to add' : 'Label to remove');
+    if (!label) return;
+  }
+  if (action === 'delete' && !confirm(`Delete ${ids.length} watch${ids.length > 1 ? 'es' : ''} and their history?`)) return;
+  try {
+    await call('bulk', { ids, action, label });
+    if (action === 'delete') state.checked.clear();
+    toast('Done.');
+  } catch (err) {
+    toast(err.message);
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Detail
 
 async function renderDetail() {
-  const { id, edit, isNew } = route();
+  const { id, edit, isNew, settings } = route();
   const detail = $('detail');
+  if (settings) return detail.replaceChildren(await settingsForm());
   if (isNew) return detail.replaceChildren(watchForm(null));
   const watch = state.watches.find((w) => w.id === id);
   if (!watch) {
@@ -79,8 +164,9 @@ async function renderDetail() {
 
   if (watch.unread) call('setRead', { id, read: true }).catch(() => {});
 
-  const [history, access] = await Promise.all([getHistory(id), hasAccess(watch.url)]);
-  if (route().id !== id || route().edit) return; // navigated away meanwhile
+  const [history, access, log] = await Promise.all([getHistory(id), hasAccess(watch.url), getLog(id)]);
+  const r = route();
+  if (r.id !== id || r.edit) return; // navigated away meanwhile
 
   const banner = access ? null : el('div', { class: 'banner' },
     el('span', {}, `Open Page Watcher needs your permission to read ${new URL(watch.url).hostname}.`),
@@ -94,16 +180,20 @@ async function renderDetail() {
       },
     }, 'Allow'));
 
+  const schedule = watch.schedule?.type === 'random'
+    ? `randomly every ${watch.intervalMinutes}–${watch.schedule.randomMaxMinutes} min`
+    : formatInterval(watch.intervalMinutes);
   const meta = [
     `Checked ${timeAgo(watch.lastCheckedAt)}`,
     watch.lastChangedAt ? `changed ${timeAgo(watch.lastChangedAt)}` : 'no changes yet',
-    formatInterval(watch.intervalMinutes),
+    schedule + (watch.schedule?.window?.enabled ? ` (${watch.schedule.window.start}–${watch.schedule.window.end})` : ''),
     watch.mode === 'tab' ? 'renders in a tab' : 'fetched without running scripts',
+    watch.live ? 'live while open' : null,
     watch.selectors.length ? `${watch.selectors.length} selected part${watch.selectors.length > 1 ? 's' : ''}` : 'whole page',
-  ].join(' · ');
+  ].filter(Boolean).join(' · ');
 
   detail.replaceChildren(...[
-    el('h1', {}, watch.name),
+    el('h1', {}, watch.name, ...(watch.labels || []).map((l) => el('span', { class: 'label-tag' }, l))),
     el('a', { class: 'url', href: watch.url, target: '_blank', rel: 'noopener noreferrer' }, watch.url),
     el('div', { class: 'meta muted' }, meta),
     banner,
@@ -118,7 +208,7 @@ async function renderDetail() {
         },
       }, 'Check now'),
       el('button', { onclick: () => go(`#/w/${encodeURIComponent(id)}/edit`) }, 'Edit'),
-      el('button', { onclick: () => saveWatch({ ...watch, paused: !watch.paused }) }, watch.paused ? 'Resume' : 'Pause'),
+      el('button', { onclick: () => call('bulk', { ids: [id], action: watch.paused ? 'resume' : 'pause' }) }, watch.paused ? 'Resume' : 'Pause'),
       el('button', { onclick: () => call('setRead', { id, read: false }) }, 'Mark unread'),
       el('button', {
         class: 'danger',
@@ -129,12 +219,15 @@ async function renderDetail() {
         },
       }, 'Delete')),
     historyView(history),
+    logView(log),
   ].filter(Boolean));
 }
 
 function versionLabel(entry, i) {
   return `Version ${i + 1} · ${new Date(entry.t).toLocaleString()}`;
 }
+
+const VIEWS = { text: 'Text', side: 'Side by side', visual: 'Visual', source: 'Source' };
 
 function historyView(history) {
   const wrap = el('section');
@@ -156,35 +249,107 @@ function historyView(history) {
   from.value = String(history.length - 2);
   to.value = String(history.length - 1);
   const onlyChanges = el('input', { type: 'checkbox', checked: true });
-  const output = el('div', { class: 'diff' });
+  const showDeleted = el('input', { type: 'checkbox', checked: state.showDeleted });
+  const output = el('div');
+  const tabs = el('div', { class: 'tabs', role: 'tablist' });
+  let current = -1;
+
+  const step = (dir) => {
+    const changes = [...output.querySelectorAll('[data-change]')];
+    if (!changes.length) return;
+    changes[current]?.classList.remove('current');
+    current = (current + dir + changes.length) % changes.length;
+    changes[current].classList.add('current');
+    changes[current].scrollIntoView({ block: 'center', behavior: 'smooth' });
+  };
 
   const draw = () => {
-    const lines = diffText(history[Number(from.value)].text, history[Number(to.value)].text);
-    output.replaceChildren(...diffNodes(lines, onlyChanges.checked));
+    current = -1;
+    const a = history[Number(from.value)];
+    const b = history[Number(to.value)];
+    for (const t of tabs.children) t.classList.toggle('active', t.dataset.view === state.view);
+    onlyChanges.parentElement.hidden = state.view === 'visual';
+    showDeleted.parentElement.hidden = state.view !== 'visual';
+    if (state.view === 'visual') {
+      if (!b.html) {
+        output.replaceChildren(el('p', { class: 'muted' },
+          'The visual view is available for the most recent versions only, and for pages read as HTML.'));
+        return;
+      }
+      const frame = el('iframe', { class: 'visual-frame', sandbox: '', title: 'Visual comparison', referrerpolicy: 'no-referrer' });
+      frame.srcdoc = visualDocument(a.text, b.html, { showDeleted: state.showDeleted });
+      output.replaceChildren(frame);
+      return;
+    }
+    if (state.view === 'source') {
+      if (!a.html || !b.html) {
+        output.replaceChildren(el('p', { class: 'muted' },
+          'The source view is available for the most recent versions only, and for pages read as HTML.'));
+        return;
+      }
+      output.replaceChildren(el('div', { class: 'diff' },
+        ...diffNodes(diffText(sourceLines(a.html), sourceLines(b.html)), onlyChanges.checked)));
+      return;
+    }
+    const lines = diffText(a.text, b.text);
+    if (state.view === 'side') {
+      output.replaceChildren(el('div', { class: 'side' },
+        el('div', { class: 'diff' }, ...sideNodes(lines, 'old', onlyChanges.checked)),
+        el('div', { class: 'diff' }, ...sideNodes(lines, 'new', onlyChanges.checked))));
+      return;
+    }
+    output.replaceChildren(el('div', { class: 'diff' }, ...diffNodes(lines, onlyChanges.checked)));
   };
+
+  for (const [key, label] of Object.entries(VIEWS)) {
+    tabs.append(el('button', {
+      dataset: { view: key },
+      onclick: () => {
+        state.view = key;
+        try {
+          localStorage.setItem('opw:view', key);
+        } catch {
+          // not persisted
+        }
+        draw();
+      },
+    }, label));
+  }
   from.addEventListener('change', draw);
   to.addEventListener('change', draw);
   onlyChanges.addEventListener('change', draw);
-  draw();
+  showDeleted.addEventListener('change', () => {
+    state.showDeleted = showDeleted.checked;
+    draw();
+  });
 
   wrap.append(
-    el('div', { class: 'versions' }, 'Compare', from, 'with', to,
-      el('label', { class: 'inline' }, onlyChanges, 'Only show changed lines')),
+    el('div', { class: 'versions' }, 'Compare', from, 'with', to),
+    el('div', { class: 'versions' }, tabs,
+      el('label', { class: 'inline' }, onlyChanges, 'Only show changed lines'),
+      el('label', { class: 'inline' }, showDeleted, 'Show deleted text'),
+      el('button', { onclick: () => step(-1), title: 'Previous change' }, '↑ Previous'),
+      el('button', { onclick: () => step(1), title: 'Next change' }, '↓ Next')),
     output,
   );
+  draw();
   return wrap;
 }
 
-function diffNodes(lines, onlyChanges) {
+// Lines to show when "only changed lines" is on: changes plus 2 lines of context.
+function keepMask(lines, onlyChanges) {
   const CONTEXT = 2;
-  const changed = lines.map((l) => l.type !== 'eq');
-  const keep = lines.map((_, i) => {
+  return lines.map((_, i) => {
     if (!onlyChanges) return true;
     for (let j = Math.max(0, i - CONTEXT); j <= Math.min(lines.length - 1, i + CONTEXT); j++) {
-      if (changed[j]) return true;
+      if (lines[j].type !== 'eq') return true;
     }
     return false;
   });
+}
+
+function withGaps(lines, onlyChanges, render) {
+  const keep = keepMask(lines, onlyChanges);
   const nodes = [];
   let skipped = 0;
   const flush = () => {
@@ -197,19 +362,53 @@ function diffNodes(lines, onlyChanges) {
       return;
     }
     flush();
-    if (line.type === 'mod') {
-      nodes.push(el('div', {}, ...line.parts.map((p) => {
-        if (p.op === 'add') return el('ins', {}, p.value);
-        if (p.op === 'del') return el('del', {}, p.value);
-        return p.value;
-      })));
-    } else {
-      nodes.push(el('div', { class: line.type === 'eq' ? '' : line.type }, line.text));
-    }
+    const node = render(line);
+    if (node) nodes.push(node);
   });
   flush();
   if (!lines.some((l) => l.type !== 'eq')) nodes.push(el('div', { class: 'gap' }, 'These versions are identical.'));
   return nodes;
+}
+
+function diffNodes(lines, onlyChanges) {
+  return withGaps(lines, onlyChanges, (line) => {
+    if (line.type === 'mod') {
+      return el('div', { dataset: { change: '' } }, ...line.parts.map((p) => {
+        if (p.op === 'add') return el('ins', {}, p.value);
+        if (p.op === 'del') return el('del', {}, p.value);
+        return p.value;
+      }));
+    }
+    if (line.type === 'eq') return el('div', {}, line.text);
+    return el('div', { class: line.type, dataset: { change: '' } }, line.text);
+  });
+}
+
+// One side of the side-by-side view. Lines missing on this side render as
+// blank rows so both columns stay aligned.
+function sideNodes(lines, side, onlyChanges) {
+  return withGaps(lines, onlyChanges, (line) => {
+    if (line.type === 'eq') return el('div', {}, line.text);
+    if (line.type === 'mod') {
+      return el('div', { dataset: { change: '' } }, ...line.parts
+        .filter((p) => p.op === 'eq' || (side === 'old' ? p.op === 'del' : p.op === 'add'))
+        .map((p) => (p.op === 'eq' ? p.value : el(p.op === 'add' ? 'ins' : 'del', {}, p.value))));
+    }
+    const mine = (side === 'old' && line.type === 'del') || (side === 'new' && line.type === 'add');
+    return mine ? el('div', { class: line.type, dataset: { change: '' } }, line.text) : el('div', {}, '');
+  });
+}
+
+function logView(log) {
+  if (!log.length) return null;
+  const rows = log.slice().reverse().map((e) => el('tr', {},
+    el('td', {}, new Date(e.t).toLocaleString()),
+    el('td', { class: e.ok ? '' : 'error' }, e.ok ? (e.changed ? (e.alerted ? 'Changed, alerted' : 'Changed') : 'No change') : e.error),
+    el('td', { class: 'muted' }, e.via === 'live' ? 'live' : ''),
+    el('td', { class: 'muted' }, `${(e.ms / 1000).toFixed(1)} s`)));
+  return el('details', { class: 'log' },
+    el('summary', {}, `Check log (last ${log.length})`),
+    el('table', { class: 'log' }, el('tbody', {}, ...rows)));
 }
 
 // ---------------------------------------------------------------------------
@@ -221,60 +420,132 @@ function intervalParts(minutes) {
   return [minutes, 1];
 }
 
+// Selector lines: "css selector", "xpath://expr", optionally ending in " @attr".
 function selectorsToText(selectors) {
-  return selectors.map((s) => (s.type === 'xpath' ? `xpath:${s.expr}` : s.expr)).join('\n');
+  return selectors.map((s) => (s.type === 'xpath' ? `xpath:${s.expr}` : s.expr) + (s.attr ? ` @${s.attr}` : '')).join('\n');
 }
 
 function textToSelectors(text) {
-  return text.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => (
-    l.startsWith('xpath:') ? { type: 'xpath', expr: l.slice(6).trim() } : { type: 'css', expr: l }
-  ));
+  return text.split('\n').map((l) => l.trim()).filter(Boolean).map((line) => {
+    let attr;
+    const m = /\s@([A-Za-z_:][\w:.-]*)$/.exec(line);
+    if (m) {
+      attr = m[1];
+      line = line.slice(0, m.index).trim();
+    }
+    const sel = line.startsWith('xpath:') ? { type: 'xpath', expr: line.slice(6).trim() } : { type: 'css', expr: line };
+    if (attr) sel.attr = attr;
+    return sel;
+  });
+}
+
+function unitSelect(value) {
+  const s = el('select', {},
+    el('option', { value: '1' }, 'minutes'), el('option', { value: '60' }, 'hours'), el('option', { value: '1440' }, 'days'));
+  s.value = String(value);
+  return s;
+}
+
+function ruleRow(rule, onRemove) {
+  const on = el('select', { 'aria-label': 'Which text' }, Object.entries(RULE_SOURCES).map(([k, v]) => el('option', { value: k }, v)));
+  const type = el('select', { 'aria-label': 'Rule' }, Object.entries(RULE_TYPES).filter(([k]) => k !== 'any').map(([k, v]) => el('option', { value: k }, v.label)));
+  const value = el('input', { value: rule.value || '', 'aria-label': 'Value' });
+  on.value = rule.on || 'text';
+  type.value = rule.type || 'contains';
+  const sync = () => {
+    const kind = RULE_TYPES[type.value].value;
+    value.hidden = !kind;
+    value.type = kind === 'number' ? 'number' : 'text';
+    value.placeholder = kind === 'regex' ? 'regular expression' : kind === 'number' ? 'number' : 'text';
+    on.disabled = /^number(In|De)creased/.test(type.value) || type.value === 'neverSeen';
+  };
+  type.addEventListener('change', sync);
+  sync();
+  const row = el('div', { class: 'rule' }, on, type, value,
+    el('button', { type: 'button', 'aria-label': 'Remove rule', onclick: () => onRemove(row) }, '✕'));
+  row.read = () => ({ on: on.value, type: type.value, value: value.hidden ? '' : value.value });
+  return row;
 }
 
 function watchForm(watch) {
   const w = watch || {
-    name: '', url: '', selectors: [], regexFilter: '', mode: 'fetch', renderDelaySeconds: 3,
-    sendCookies: false, intervalMinutes: DEFAULT_INTERVAL_MINUTES, historyLimit: DEFAULT_HISTORY,
-    condition: { type: 'any', value: '' }, notify: true, sound: false,
+    name: '', url: '', selectors: [], excludes: [], regexFilter: '', mode: 'fetch', renderDelaySeconds: 3,
+    includeFrames: false, live: false, sendCookies: false, intervalMinutes: DEFAULT_INTERVAL_MINUTES,
+    schedule: { type: 'interval', randomMaxMinutes: DEFAULT_INTERVAL_MINUTES * 2, window: { enabled: false, days: [1, 2, 3, 4, 5], start: '09:00', end: '17:00' } },
+    historyLimit: DEFAULT_HISTORY, condition: { match: 'all', rules: [] }, notify: true, sound: false, labels: [],
   };
+  const schedule = w.schedule || { type: 'interval', randomMaxMinutes: w.intervalMinutes * 2, window: { enabled: false, days: [1, 2, 3, 4, 5], start: '09:00', end: '17:00' } };
+  const condition = normalizeCondition(w.condition);
   const [n, unit] = intervalParts(w.intervalMinutes);
+  const [rn, runit] = intervalParts(schedule.randomMaxMinutes);
 
   const f = {
     name: el('input', { value: w.name, placeholder: 'Defaults to the site name' }),
     url: el('input', { type: 'url', value: w.url, required: true, placeholder: 'https://example.com/page' }),
-    selectors: el('textarea', { rows: 3, placeholder: '#price\n.status-banner\nxpath://table[1]//tr[2]' }),
+    labels: el('input', { value: (w.labels || []).join(', '), placeholder: 'e.g. work, prices' }),
+    selectors: el('textarea', { rows: 3, placeholder: '#price\n.status-banner\na.download @href\nxpath://table[1]//tr[2]' }),
+    excludes: el('textarea', { rows: 2, placeholder: '.ad-banner\n.timestamp' }),
     regexFilter: el('input', { value: w.regexFilter, placeholder: 'Optional, e.g. \\$[\\d,.]+' }),
+    scheduleType: el('select', {},
+      el('option', { value: 'interval' }, 'Every'), el('option', { value: 'random' }, 'Randomly between')),
     every: el('input', { type: 'number', min: 1, value: String(n), required: true }),
-    unit: el('select', {},
-      el('option', { value: '1' }, 'minutes'), el('option', { value: '60' }, 'hours'), el('option', { value: '1440' }, 'days')),
+    unit: unitSelect(unit),
+    randomMax: el('input', { type: 'number', min: 1, value: String(rn) }),
+    randomUnit: unitSelect(runit),
+    windowOn: el('input', { type: 'checkbox', checked: schedule.window.enabled }),
+    windowStart: el('input', { type: 'time', value: schedule.window.start }),
+    windowEnd: el('input', { type: 'time', value: schedule.window.end }),
+    days: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d, i) => el('input', { type: 'checkbox', value: String(i), checked: schedule.window.days.includes(i), 'aria-label': d })),
     mode: el('select', {},
       el('option', { value: 'fetch' }, 'Download the page without running its scripts (safer, faster)'),
       el('option', { value: 'tab' }, 'Open it in a hidden window so its scripts run (for dynamic pages)')),
     renderDelaySeconds: el('input', { type: 'number', min: 0, max: 60, value: String(w.renderDelaySeconds) }),
+    includeFrames: el('input', { type: 'checkbox', checked: w.includeFrames }),
+    live: el('input', { type: 'checkbox', checked: w.live }),
     sendCookies: el('input', { type: 'checkbox', checked: w.sendCookies }),
-    condType: el('select', {}, Object.entries(CONDITION_TYPES).map(([k, v]) => el('option', { value: k }, v.label))),
-    condValue: el('input', { value: w.condition.value }),
+    match: el('select', {}, el('option', { value: 'all' }, 'all'), el('option', { value: 'any' }, 'any')),
     notify: el('input', { type: 'checkbox', checked: w.notify }),
     sound: el('input', { type: 'checkbox', checked: w.sound }),
     historyLimit: el('input', { type: 'number', min: 2, max: 200, value: String(w.historyLimit) }),
   };
   f.selectors.value = selectorsToText(w.selectors);
-  f.unit.value = String(unit);
+  f.excludes.value = selectorsToText(w.excludes || []);
   f.mode.value = w.mode;
-  f.condType.value = w.condition.type;
+  f.scheduleType.value = schedule.type;
+  f.match.value = condition.match;
+
+  const rules = el('div', { class: 'rules' });
+  const addRule = (rule) => rules.append(ruleRow(rule, (row) => {
+    row.remove();
+    sync();
+  }));
+  condition.rules.forEach(addRule);
 
   const delayRow = el('label', { class: 'field' }, el('span', {}, 'Wait after load (seconds)'), f.renderDelaySeconds);
+  const framesRow = el('label', { class: 'check' }, f.includeFrames,
+    el('span', {}, 'Include content inside frames on the page',
+      el('div', { class: 'hint' }, 'Only frames from sites you have allowed are read.')));
   const cookieRow = el('label', { class: 'check' }, f.sendCookies,
     el('span', {}, 'Send my cookies for this site',
       el('div', { class: 'hint' }, 'Needed for pages behind a login. Off by default so watches can’t act as you.')));
-  const condValueRow = el('label', { class: 'field' }, el('span', {}, 'Value'), f.condValue);
-  const sync = () => {
+  const randomRow = el('span', { class: 'inline' }, 'and', f.randomMax, f.randomUnit);
+  const windowRow = el('div', { class: 'field' },
+    el('div', { class: 'inline' }, 'Between', f.windowStart, 'and', f.windowEnd),
+    el('div', { class: 'days' }, ...f.days.map((d) => el('label', {}, d, d.getAttribute('aria-label')))));
+  const matchRow = el('div', { class: 'inline' }, 'Alert when', f.match, 'of these are true:');
+  const noRules = el('p', { class: 'hint' }, 'No rules: every change alerts you.');
+  function sync() {
     delayRow.hidden = f.mode.value !== 'tab';
+    framesRow.hidden = f.mode.value !== 'tab';
     cookieRow.hidden = f.mode.value === 'tab';
-    condValueRow.hidden = !CONDITION_TYPES[f.condType.value].needsValue;
-  };
+    randomRow.hidden = f.scheduleType.value !== 'random';
+    windowRow.hidden = !f.windowOn.checked;
+    matchRow.hidden = rules.children.length < 2;
+    noRules.hidden = rules.children.length > 0;
+  }
   f.mode.addEventListener('change', sync);
-  f.condType.addEventListener('change', sync);
+  f.scheduleType.addEventListener('change', sync);
+  f.windowOn.addEventListener('change', sync);
   sync();
 
   const error = el('p', { class: 'error', hidden: true });
@@ -297,13 +568,27 @@ function watchForm(watch) {
         ...(watch || {}),
         name: f.name.value,
         url,
+        labels: f.labels.value.split(',').map((l) => l.trim()).filter(Boolean),
         selectors: textToSelectors(f.selectors.value),
+        excludes: textToSelectors(f.excludes.value).map(({ type, expr }) => ({ type, expr })),
         regexFilter: f.regexFilter.value,
         intervalMinutes: Number(f.every.value) * Number(f.unit.value),
+        schedule: {
+          type: f.scheduleType.value,
+          randomMaxMinutes: Number(f.randomMax.value) * Number(f.randomUnit.value),
+          window: {
+            enabled: f.windowOn.checked,
+            days: f.days.filter((d) => d.checked).map((d) => Number(d.value)),
+            start: f.windowStart.value || '09:00',
+            end: f.windowEnd.value || '17:00',
+          },
+        },
         mode: f.mode.value,
         renderDelaySeconds: Number(f.renderDelaySeconds.value),
+        includeFrames: f.includeFrames.checked,
+        live: f.live.checked,
         sendCookies: f.sendCookies.checked,
-        condition: { type: f.condType.value, value: f.condValue.value },
+        condition: { match: f.match.value, rules: [...rules.children].map((r) => r.read()) },
         notify: f.notify.checked,
         sound: f.sound.checked,
         historyLimit: Number(f.historyLimit.value),
@@ -320,20 +605,39 @@ function watchForm(watch) {
     },
   },
   el('h1', {}, watch ? `Edit ${watch.name}` : 'Add a watch'),
-  el('label', { class: 'field' }, el('span', {}, 'Page address'), f.url),
+  el('label', { class: 'field' }, el('span', {}, 'Page address'), f.url,
+    el('span', { class: 'hint' }, 'Web pages, JSON, plain text, PDF files, RSS/Atom feeds and XML sitemaps are supported.')),
   el('label', { class: 'field' }, el('span', {}, 'Name'), f.name),
+  el('label', { class: 'field' }, el('span', {}, 'Labels'), f.labels, el('span', { class: 'hint' }, 'Separate labels with commas.')),
   el('fieldset', {}, el('legend', {}, 'What to watch'),
     el('label', { class: 'field' }, el('span', {}, 'Parts of the page (leave empty for the whole page)'), f.selectors,
-      el('span', { class: 'hint' }, 'One CSS selector per line. Start a line with xpath: for XPath. The "Select parts of page" button in the toolbar popup fills this in for you.')),
+      el('span', { class: 'hint' }, 'One CSS selector per line. Start a line with xpath: for XPath. End a line with @href, @src or another attribute name to watch that attribute instead of the text. The "Select parts of page" button in the toolbar popup fills this in for you.')),
+    el('label', { class: 'field' }, el('span', {}, 'Leave out'), f.excludes,
+      el('span', { class: 'hint' }, 'Selectors for parts to ignore, such as ads or timestamps.')),
     el('label', { class: 'field' }, el('span', {}, 'Keep only text matching this regular expression'), f.regexFilter)),
-  el('fieldset', {}, el('legend', {}, 'How to check'),
-    el('div', { class: 'field' }, el('span', {}, 'Check every'), el('div', { class: 'inline' }, f.every, f.unit)),
-    el('label', { class: 'field' }, el('span', {}, 'Loading'), f.mode),
+  el('fieldset', {}, el('legend', {}, 'When to check'),
+    el('div', { class: 'inline' }, f.scheduleType, f.every, f.unit, randomRow),
+    el('label', { class: 'check' }, f.windowOn, el('span', {}, 'Only check during certain hours')),
+    windowRow,
+    el('label', { class: 'check' }, f.live,
+      el('span', {}, 'Also check instantly while the page is open in a tab',
+        el('div', { class: 'hint' }, 'Watches the open tab for changes and re-reads it right away.')))),
+  el('fieldset', {}, el('legend', {}, 'How to load the page'),
+    el('label', { class: 'field' }, f.mode),
     delayRow,
+    framesRow,
     cookieRow),
   el('fieldset', {}, el('legend', {}, 'Alerts'),
-    el('label', { class: 'field' }, el('span', {}, 'Alert when'), f.condType),
-    condValueRow,
+    matchRow,
+    rules,
+    noRules,
+    el('div', {}, el('button', {
+      type: 'button',
+      onclick: () => {
+        addRule({ type: 'contains', on: 'text', value: '' });
+        sync();
+      },
+    }, '+ Add rule')),
     el('label', { class: 'check' }, f.notify, el('span', {}, 'Desktop notification')),
     el('label', { class: 'check' }, f.sound, el('span', {}, 'Play a sound')),
     el('label', { class: 'field' }, el('span', {}, 'Versions to keep'), f.historyLimit)),
@@ -344,12 +648,28 @@ function watchForm(watch) {
   return form;
 }
 
-async function saveWatch(data) {
-  try {
-    await call('updateWatch', { watch: data });
-  } catch (e) {
-    toast(e.message);
-  }
+// ---------------------------------------------------------------------------
+// Settings
+
+async function settingsForm() {
+  const s = await getSettings();
+  const enabled = el('input', { type: 'checkbox', checked: s.errorAlerts.enabled });
+  const after = el('input', { type: 'number', min: 1, max: 100, value: String(s.errorAlerts.after) });
+  const every = el('input', { type: 'number', min: 1, max: 1440, value: String(s.errorAlerts.minIntervalMinutes) });
+  return el('form', {
+    onsubmit: async (e) => {
+      e.preventDefault();
+      await call('saveSettings', {
+        settings: { errorAlerts: { enabled: enabled.checked, after: Number(after.value), minIntervalMinutes: Number(every.value) } },
+      });
+      toast('Settings saved.');
+    },
+  },
+  el('h1', {}, 'Settings'),
+  el('fieldset', {}, el('legend', {}, 'Error alerts'),
+    el('label', { class: 'check' }, enabled, el('span', {}, 'Notify me when a watch keeps failing')),
+    el('div', { class: 'inline' }, 'After', after, 'failed checks in a row, at most every', every, 'minutes')),
+  el('div', { class: 'row' }, el('button', { class: 'primary', type: 'submit' }, 'Save')));
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +685,7 @@ function toast(text) {
 }
 
 $('add').addEventListener('click', () => go('#/new'));
+$('settings').addEventListener('click', () => go('#/settings'));
 $('mark-all').addEventListener('click', () => call('markAllRead'));
 $('search').addEventListener('input', (e) => {
   state.search = e.target.value;
@@ -411,8 +732,8 @@ async function refresh() {
 function render() {
   renderList();
   // Don't wipe a form the user is typing in.
-  const { edit, isNew } = route();
-  if ((edit || isNew) && $('detail').querySelector('form') && document.activeElement?.closest('form')) return;
+  const { edit, isNew, settings } = route();
+  if ((edit || isNew || settings) && $('detail').querySelector('form') && document.activeElement?.closest('form')) return;
   renderDetail();
 }
 
