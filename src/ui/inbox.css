@@ -94,3 +94,6 @@ table.log td, table.log th, table.num-table td, table.num-table th { text-align:
 .presets { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .presets button { font-size: 12px; padding: 3px 8px; }
 kbd { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--bg-soft); }
+.inline input[type=time] { width: auto; }
+table.shortcuts { width: auto; justify-self: start; }
+table.shortcuts td:first-child { padding-right: 24px; }

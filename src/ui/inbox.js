@@ -778,7 +778,7 @@ async function settingsForm() {
       el('div', { class: 'hint' }, 'Watches keep checking. What changed is sent as one summary when quiet hours end.'))),
     quietRow),
   el('fieldset', {}, el('legend', {}, 'Keyboard shortcuts'),
-    el('table', { class: 'log' }, el('tbody', {},
+    el('table', { class: 'log shortcuts' }, el('tbody', {},
       ...[['j / k', 'Next / previous watch'], ['e', 'Edit'], ['c', 'Check now'], ['u', 'Mark read or unread'],
         ['n', 'Add a watch'], ['/', 'Search'], ['Alt+Shift+W', 'Pick parts of the current page to watch (any tab)']]
         .map(([k, v]) => el('tr', {}, el('td', {}, el('kbd', {}, k)), el('td', {}, v))))),
