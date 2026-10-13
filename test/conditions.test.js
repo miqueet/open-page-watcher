@@ -66,3 +66,9 @@ test('v0.1 conditions are migrated', () => {
   assert.deepEqual(normalizeCondition({ match: 'any', rules: [{ type: 'bogus' }, { type: 'empty', on: 'nope' }] }),
     { match: 'any', rules: [{ type: 'empty', value: '', on: 'text' }] });
 });
+
+test('changedText keeps multi-word changes together and splits separate ones', async () => {
+  const { changedText } = await import('../src/lib/conditions.js');
+  assert.deepEqual(changedText('In stock', 'Only 3 left'), { added: 'Only 3 left', deleted: 'In stock' });
+  assert.deepEqual(changedText('Price is 10 dollars today', 'Price is 12 dollars now'), { added: '12\nnow', deleted: '10\ntoday' });
+});

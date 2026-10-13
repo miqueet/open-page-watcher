@@ -7,6 +7,7 @@ import { DEFAULT_INTERVAL_MINUTES, DEFAULT_HISTORY } from '../lib/watch.js';
 import { getLog, getSettings, DIGEST_CHOICES } from '../lib/storage.js';
 import { visualDocument, sourceLines } from './visual.js';
 import { numberSeries, numberChart } from './chart.js';
+import { encryptBackup, decryptBackup, isEncrypted } from '../lib/backup.js';
 import { getPolicy, isManaged } from '../lib/policy.js';
 
 const $ = (id) => document.getElementById(id);
@@ -214,6 +215,10 @@ async function renderDetail() {
           await call('checkNow', { id }).catch((err) => toast(err.message));
         },
       }, 'Check now'),
+      el('button', {
+        title: 'Opens the page and highlights what the latest change added',
+        onclick: () => call('openPage', { id }).catch((err) => toast(err.message)),
+      }, 'Open page'),
       el('button', { onclick: () => go(`#/w/${encodeURIComponent(id)}/edit`) }, 'Edit'),
       el('button', { onclick: () => call('bulk', { ids: [id], action: watch.paused ? 'resume' : 'pause' }) }, watch.paused ? 'Resume' : 'Pause'),
       el('button', { onclick: () => call('setRead', { id, read: false }) }, 'Mark unread'),
@@ -774,12 +779,70 @@ for (const b of document.querySelectorAll('.filters button')) {
   });
 }
 
-$('export').addEventListener('click', async () => {
-  const { data } = await call('exportAll');
+// A small modal form. Resolves to true when confirmed.
+function dialog(title, body, confirmLabel) {
+  return new Promise((resolve) => {
+    const confirmBtn = el('button', { class: 'primary', type: 'submit' }, confirmLabel);
+    const d = el('dialog', { class: 'dialog' },
+      el('form', { method: 'dialog' },
+        el('h2', {}, title),
+        ...body,
+        el('div', { class: 'row' },
+          el('button', { type: 'button', onclick: () => d.close('cancel') }, 'Cancel'),
+          confirmBtn)));
+    d.addEventListener('close', () => {
+      d.remove();
+      resolve(d.returnValue === 'ok');
+    });
+    confirmBtn.value = 'ok';
+    document.body.append(d);
+    d.showModal();
+  });
+}
+
+function download(data, name) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const a = el('a', { href: URL.createObjectURL(blob), download: `open-page-watcher-${new Date().toISOString().slice(0, 10)}.json` });
+  const a = el('a', { href: URL.createObjectURL(blob), download: name });
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+$('export').addEventListener('click', async () => {
+  const protect = el('input', { type: 'checkbox', id: 'backup-protect' });
+  const pw = el('input', { type: 'password', id: 'backup-password', autocomplete: 'new-password', minlength: 8, placeholder: 'At least 8 characters' });
+  const pw2 = el('input', { type: 'password', id: 'backup-password2', autocomplete: 'new-password', placeholder: 'Type it again' });
+  const fields = el('div', { class: 'field', hidden: true },
+    el('label', { class: 'field' }, el('span', {}, 'Password'), pw),
+    el('label', { class: 'field' }, el('span', {}, 'Confirm password'), pw2),
+    el('p', { class: 'hint' }, "There's no way to recover a forgotten password."));
+  const sync = () => {
+    fields.hidden = !protect.checked;
+    pw.required = protect.checked;
+    pw2.setCustomValidity(protect.checked && pw.value !== pw2.value ? "The passwords don't match" : '');
+  };
+  protect.addEventListener('change', sync);
+  pw.addEventListener('input', sync);
+  pw2.addEventListener('input', sync);
+  const ok = await dialog('Export watches', [
+    el('p', { class: 'hint' }, 'Saves your watches and settings to a file on this computer. Saved versions are not included.'),
+    el('label', { class: 'check' }, protect, el('span', {}, 'Protect the file with a password',
+      el('div', { class: 'hint' }, 'Recommended if the file will leave this computer. Your watched addresses can be sensitive.'))),
+    fields,
+  ], 'Export');
+  if (!ok) return;
+  try {
+    const { data } = await call('exportAll');
+    const day = new Date().toISOString().slice(0, 10);
+    if (protect.checked) {
+      toast('Encrypting…');
+      download(await encryptBackup(data, pw.value), `open-page-watcher-${day}-protected.json`);
+    } else {
+      download(data, `open-page-watcher-${day}.json`);
+    }
+    toast('Exported.');
+  } catch (err) {
+    toast(`Export failed: ${err.message}`);
+  }
 });
 
 $('import').addEventListener('click', () => $('import-file').click());
@@ -788,9 +851,17 @@ $('import-file').addEventListener('change', async (e) => {
   e.target.value = '';
   if (!file) return;
   try {
-    if (file.size > 5 * 1024 * 1024) throw new Error('That file is too large');
-    const data = JSON.parse(await file.text());
-    const res = await call('importAll', { data });
+    if (file.size > 20 * 1024 * 1024) throw new Error('That file is too large');
+    let data = JSON.parse(await file.text());
+    if (isEncrypted(data)) {
+      const pw = el('input', { type: 'password', id: 'import-password', autocomplete: 'current-password', required: true });
+      if (!await dialog('Password-protected file', [el('label', { class: 'field' }, el('span', {}, 'Password'), pw)], 'Unlock')) return;
+      data = await decryptBackup(data, pw.value);
+    }
+    const includeSettings = Boolean(data?.settings) && await dialog('Import settings too?', [
+      el('p', {}, 'This file also has settings (alerts, quiet hours). Replace your current settings with them?'),
+    ], 'Replace settings');
+    const res = await call('importAll', { data, includeSettings });
     toast(`Imported ${res.imported} watch${res.imported === 1 ? '' : 'es'}${res.skipped.length ? `, skipped ${res.skipped.length}` : ''}. Open each one and click Allow to grant site access.`);
   } catch (err) {
     toast(`Import failed: ${err.message}`);

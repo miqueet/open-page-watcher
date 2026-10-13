@@ -1,12 +1,13 @@
 import { extractText } from './lib/extract.js';
-import { conditionMet } from './lib/conditions.js';
+import { conditionMet, changedText } from './lib/conditions.js';
+import { highlightChanges, HIGHLIGHT_CSS } from './lib/highlight.js';
 import {
   summarizeChange, inQuietHours, shouldHold, readyToFlush, queueAlert, digestMessage,
 } from './lib/alerts.js';
 import { pdfToText } from './lib/pdf.js';
 import { getPolicy, checkSiteAllowed, applyPolicy } from './lib/policy.js';
 import {
-  sanitizeWatch, exportableWatch, postProcess, isDue, nextCheckTime, originPattern, sameDocument, comparisonKey,
+  sanitizeWatch, exportableWatch, postProcess, isDue, nextCheckTime, originPattern, sameDocument, comparisonKey, isHttpUrl,
 } from './lib/watch.js';
 import {
   getWatches, getWatch, updateWatches, getHistory, appendHistory, deleteHistory, appendLog,
@@ -35,6 +36,7 @@ chrome.runtime.onStartup.addListener(setup);
 
 async function setup() {
   await chrome.alarms.create(TICK_ALARM, { periodInMinutes: 1, delayInMinutes: 0.1 });
+  await setupMenus();
   await updateBadge();
 }
 
@@ -53,6 +55,68 @@ async function runDueChecks() {
     while (due.length) await checkWatch(due.shift().id);
   });
   await Promise.all(workers);
+}
+
+// ---------------------------------------------------------------------------
+// Right-click menu and keyboard shortcut
+
+const WEB_PAGES = ['http://*/*', 'https://*/*'];
+
+async function setupMenus() {
+  await chrome.contextMenus.removeAll();
+  chrome.contextMenus.create({ id: 'watch-page', title: 'Watch this page for changes', contexts: ['page'], documentUrlPatterns: WEB_PAGES });
+  chrome.contextMenus.create({ id: 'watch-part', title: 'Watch part of this page…', contexts: ['page', 'selection', 'image', 'link'], documentUrlPatterns: WEB_PAGES });
+  chrome.contextMenus.create({ id: 'watch-link', title: 'Watch the linked page for changes', contexts: ['link'], targetUrlPatterns: WEB_PAGES });
+}
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  let task;
+  if (info.menuItemId === 'watch-page') task = quickWatch(info.pageUrl || tab?.url, tab?.title);
+  else if (info.menuItemId === 'watch-link') task = quickWatch(info.linkUrl, (info.selectionText || '').trim());
+  else if (info.menuItemId === 'watch-part') task = startPicker(tab);
+  task?.catch((e) => notifyProblem(e));
+});
+
+chrome.commands.onCommand.addListener((command, tab) => {
+  if (command === 'watch-part') startPicker(tab).catch((e) => notifyProblem(e));
+});
+
+// Asks for access to a site. Chrome may refuse to show the prompt outside a
+// page of the extension; then the inbox offers an Allow button instead.
+async function askAccess(url) {
+  try {
+    return await chrome.permissions.request({ origins: [originPattern(url)] });
+  } catch {
+    return false;
+  }
+}
+
+async function quickWatch(url, name) {
+  const watch = await enforcePolicy(sanitizeWatch({ url, name: name || '' }), { adding: 1 });
+  await updateWatches((all) => {
+    all[watch.id] = watch;
+  });
+  await askAccess(watch.url);
+  checkWatch(watch.id);
+  await openInbox(watch.id);
+}
+
+// The context menu click or shortcut grants temporary access to the tab
+// (activeTab), which is enough to run the picker.
+async function startPicker(tab) {
+  if (!tab?.id || !isHttpUrl(tab.url || '')) throw new Error('Only http and https pages can be watched.');
+  checkSiteAllowed(await getPolicy(), tab.url);
+  await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['src/picker.js'] });
+  await askAccess(tab.url);
+}
+
+function notifyProblem(e) {
+  return chrome.notifications.create(`problem:${Date.now()}`, {
+    type: 'basic',
+    iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+    title: "Couldn't add the watch",
+    message: (e?.message || String(e)).slice(0, 300),
+  }).catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
@@ -474,9 +538,41 @@ chrome.notifications.onButtonClicked.addListener(async (notificationId, buttonIn
   if (notificationId.startsWith('digest:')) return openInbox(null);
   if (!id) return;
   if (buttonIndex === 0) return openInbox(id);
-  const watch = await getWatch(id);
-  if (watch) chrome.tabs.create({ url: watch.url });
+  openPage(id).catch(() => {});
 });
+
+// Opens the watched page and highlights what the latest change added.
+async function openPage(id) {
+  const watch = await getWatch(id);
+  if (!watch) throw new Error('Watch not found');
+  const tab = await chrome.tabs.create({ url: watch.url });
+  const history = await getHistory(id);
+  if (history.length < 2 || !(await chrome.permissions.contains({ origins: [originPattern(watch.url)] }))) return 0;
+  const { added } = changedText(history[history.length - 2].text, history[history.length - 1].text);
+  const fragments = added.split('\n').map((l) => l.trim()).filter((l) => l.length >= 2).slice(0, 50);
+  if (!fragments.length) return 0;
+  // Dynamic pages may fill in after load, so try a few times.
+  for (const wait of [0, 1500, 4000]) {
+    try {
+      await waitForTabComplete(tab.id);
+      if (wait) await new Promise((r) => setTimeout(r, wait));
+      const current = await chrome.tabs.get(tab.id);
+      if (!sameDocument(current.url || current.pendingUrl || '', watch.url)) return 0; // navigated elsewhere
+      const [{ result } = {}] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: highlightChanges,
+        args: [fragments, watch.selectors.map(({ type, expr }) => ({ type, expr }))],
+      });
+      if (result > 0) {
+        await chrome.scripting.insertCSS({ target: { tabId: tab.id }, css: HIGHLIGHT_CSS });
+        return result;
+      }
+    } catch {
+      return 0; // tab closed, or the page can't be scripted
+    }
+  }
+  return 0;
+}
 
 async function openInbox(id) {
   const url = id ? `${INBOX_URL}#/w/${encodeURIComponent(id)}` : `${INBOX_URL}#/unread`;
@@ -567,6 +663,10 @@ const uiHandlers = {
     return uiHandlers.bulk({ ids: [id], action: 'delete' });
   },
 
+  async openPage({ id }) {
+    return { highlighted: await openPage(id) };
+  },
+
   async checkNow({ id }) {
     await checkWatch(id);
     return {};
@@ -633,10 +733,10 @@ const uiHandlers = {
 
   async exportAll() {
     const watches = Object.values(await getWatches()).map(exportableWatch);
-    return { data: { format: 'open-page-watcher', version: 2, watches } };
+    return { data: { format: 'open-page-watcher', version: 3, watches, settings: await getSettings() } };
   },
 
-  async importAll({ data }) {
+  async importAll({ data, includeSettings = false }) {
     if (data?.format !== 'open-page-watcher' || !Array.isArray(data.watches)) {
       throw new Error('This is not an Open Page Watcher export file');
     }
@@ -654,6 +754,9 @@ const uiHandlers = {
     await updateWatches((all) => {
       for (const w of imported) all[w.id] = w;
     });
+    if (includeSettings === true && data.settings && typeof data.settings === 'object') {
+      await chrome.storage.local.set({ settings: sanitizeSettings(data.settings) });
+    }
     await broadcast({ type: 'changed' });
     const origins = [...new Set(imported.map((w) => originPattern(w.url)))];
     return { imported: imported.length, skipped, origins };
@@ -703,5 +806,6 @@ async function savePickerWatch(message, tab) {
     all[watch.id] = watch;
   });
   checkWatch(watch.id);
+  if (!(await chrome.permissions.contains({ origins: [originPattern(watch.url)] }))) openInbox(watch.id);
   return { id: watch.id };
 }

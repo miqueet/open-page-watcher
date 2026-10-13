@@ -11,7 +11,8 @@
     "notifications",
     "offscreen",
     "activeTab",
-    "scripting"
+    "scripting",
+    "contextMenus"
   ],
   "optional_host_permissions": [
     "http://*/*",
@@ -27,6 +28,14 @@
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png"
+    }
+  },
+  "commands": {
+    "watch-part": {
+      "suggested_key": {
+        "default": "Alt+Shift+W"
+      },
+      "description": "Pick parts of this page to watch"
     }
   },
   "options_page": "src/ui/inbox.html",
