@@ -15,12 +15,23 @@ test('fills defaults and clamps values', () => {
   assert.equal(w.historyLimit, 200);
   assert.equal(w.mode, 'fetch');
   assert.equal(w.sendCookies, false);
+  assert.equal(w.autoCookies, true);
+  assert.equal(w.onSignIn, 'notify');
   assert.equal(w.notify, true);
   assert.match(w.id, /^[0-9a-f-]{36}$/);
 });
 
+test('sign-in options are cleaned', () => {
+  const w = sanitizeWatch({ url: 'https://example.com', autoCookies: false, onSignIn: 'tab' });
+  assert.equal(w.autoCookies, false);
+  assert.equal(w.onSignIn, 'tab');
+  assert.equal(sanitizeWatch({ url: 'https://example.com', onSignIn: 'explode' }).onSignIn, 'notify');
+});
+
 test('ignores runtime state from untrusted input', () => {
-  const w = sanitizeWatch({ url: 'https://example.com', unread: true, lastError: 'x', lastCheckedAt: 5 });
+  const w = sanitizeWatch({ url: 'https://example.com', unread: true, lastError: 'x', lastCheckedAt: 5, signInNeeded: true, signInHandled: true });
+  assert.equal(w.signInNeeded, false);
+  assert.equal(w.signInHandled, false);
   assert.equal(w.unread, false);
   assert.equal(w.lastError, '');
   assert.equal(w.lastCheckedAt, 0);

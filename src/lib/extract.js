@@ -12,7 +12,9 @@
 //   userTab: boolean,          // the user's own tab (live mode): skip anything they may have typed
 //   expect: { url } | { origin },  // the main frame must still show this page or site
 // }
-// Returns { ok: true, text, matched, html? } or { ok: false, error }.
+// Returns { ok: true, text, matched, html? } or { ok: false, error }, plus
+// signInForm (the page has a password or username field; no values are read)
+// and title, used to spot a sign-in page.
 export function extractText(spec, doc = document) {
   const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'IFRAME', 'OBJECT', 'HEAD']);
   const BLOCK = new Set([
@@ -142,41 +144,53 @@ export function extractText(spec, doc = document) {
       .join('\n');
   }
 
+  let signInForm = false;
+  let title = '';
   try {
-    const expect = spec && spec.expect;
-    if (expect && doc.location && typeof window !== 'undefined' && window.top === window) {
-      const here = String(doc.location.href).split('#')[0];
-      if ((expect.url && here !== String(expect.url).split('#')[0]) || (expect.origin && doc.location.origin !== expect.origin)) {
-        return { ok: false, error: 'The tab no longer shows this page' };
+    signInForm = Boolean(doc.querySelector('input[type=password i], input[autocomplete~="username" i], input[autocomplete~="current-password" i]'));
+    title = String(doc.title || '').slice(0, 200);
+  } catch {
+    // not an HTML document
+  }
+  return Object.assign(read(), { signInForm, title });
+
+  function read() {
+    try {
+      const expect = spec && spec.expect;
+      if (expect && doc.location && typeof window !== 'undefined' && window.top === window) {
+        const here = String(doc.location.href).split('#')[0];
+        if ((expect.url && here !== String(expect.url).split('#')[0]) || (expect.origin && doc.location.origin !== expect.origin)) {
+          return { ok: false, error: 'The tab no longer shows this page' };
+        }
       }
-    }
-    const selectors = (spec && spec.selectors) || [];
-    excluded = new Set(((spec && spec.excludes) || []).flatMap(find));
-    const html = spec && spec.captureHtml ? newHtmlBuffer() : null;
-    const finish = (result) => {
-      if (html && html.size <= MAX_HTML) result.html = html.parts.join('');
-      return result;
-    };
-    if (selectors.length === 0) {
-      const root = doc.body || doc.documentElement;
-      if (!root) return { ok: false, error: 'Page has no content' };
-      if (html) htmlOf(root, html);
-      return finish({ ok: true, text: textOf(root), matched: 1 });
-    }
-    const parts = [];
-    let matched = 0;
-    for (const sel of selectors) {
-      const nodes = find(sel).filter((n) => !excluded.has(n));
-      matched += nodes.length;
-      for (const node of nodes) {
-        if (html && node.nodeType === 1) htmlOf(node, html);
-        if (sel.attr) parts.push(attrOf(node, sel.attr));
-        else parts.push(node.nodeType === 1 || node.nodeType === 9 ? textOf(node) : String(node.nodeValue ?? node.textContent ?? ''));
+      const selectors = (spec && spec.selectors) || [];
+      excluded = new Set(((spec && spec.excludes) || []).flatMap(find));
+      const html = spec && spec.captureHtml ? newHtmlBuffer() : null;
+      const finish = (result) => {
+        if (html && html.size <= MAX_HTML) result.html = html.parts.join('');
+        return result;
+      };
+      if (selectors.length === 0) {
+        const root = doc.body || doc.documentElement;
+        if (!root) return { ok: false, error: 'Page has no content' };
+        if (html) htmlOf(root, html);
+        return finish({ ok: true, text: textOf(root), matched: 1 });
       }
+      const parts = [];
+      let matched = 0;
+      for (const sel of selectors) {
+        const nodes = find(sel).filter((n) => !excluded.has(n));
+        matched += nodes.length;
+        for (const node of nodes) {
+          if (html && node.nodeType === 1) htmlOf(node, html);
+          if (sel.attr) parts.push(attrOf(node, sel.attr));
+          else parts.push(node.nodeType === 1 || node.nodeType === 9 ? textOf(node) : String(node.nodeValue ?? node.textContent ?? ''));
+        }
+      }
+      if (matched === 0) return { ok: false, error: 'None of the selected elements were found on the page' };
+      return finish({ ok: true, text: parts.filter(Boolean).join('\n'), matched });
+    } catch (e) {
+      return { ok: false, error: 'Selector error: ' + (e && e.message ? e.message : String(e)) };
     }
-    if (matched === 0) return { ok: false, error: 'None of the selected elements were found on the page' };
-    return finish({ ok: true, text: parts.filter(Boolean).join('\n'), matched });
-  } catch (e) {
-    return { ok: false, error: 'Selector error: ' + (e && e.message ? e.message : String(e)) };
   }
 }

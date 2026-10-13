@@ -5,6 +5,8 @@ export const MAX_INTERVAL_MINUTES = 7 * 24 * 60;
 export const DEFAULT_INTERVAL_MINUTES = 60;
 export const DEFAULT_HISTORY = 20;
 export const MAX_HISTORY = 200;
+// What to do when a check finds a sign-in page instead of the watched content.
+export const SIGN_IN_ACTIONS = ['notify', 'tab', 'pause', 'nothing'];
 const MAX_STRING = 2000;
 
 export function isHttpUrl(value) {
@@ -129,6 +131,10 @@ export function sanitizeWatch(input, existing = {}) {
     includeFrames: src.includeFrames === true,
     live: src.live === true,
     sendCookies: src.sendCookies === true,
+    // Try once with cookies when the page asks the user to sign in, and keep
+    // them on if that gets past the sign-in page.
+    autoCookies: src.autoCookies !== false,
+    onSignIn: SIGN_IN_ACTIONS.includes(src.onSignIn) ? src.onSignIn : 'notify',
     intervalMinutes,
     schedule,
     historyLimit: clampInt(src.historyLimit, 2, MAX_HISTORY, DEFAULT_HISTORY),
@@ -153,10 +159,14 @@ export function sanitizeWatch(input, existing = {}) {
     errorCount: Number(existing.errorCount) || 0,
     unread: existing.unread === true,
     lastSummary: typeof existing.lastSummary === 'string' ? existing.lastSummary : '',
+    signInNeeded: existing.signInNeeded === true,
+    signInHandled: existing.signInHandled === true,
   };
 }
 
-const RUNTIME_FIELDS = ['lastCheckedAt', 'lastChangedAt', 'nextCheckAt', 'lastError', 'errorCount', 'unread', 'lastSummary'];
+const RUNTIME_FIELDS = [
+  'lastCheckedAt', 'lastChangedAt', 'nextCheckAt', 'lastError', 'errorCount', 'unread', 'lastSummary', 'signInNeeded', 'signInHandled',
+];
 
 // Fields included in an export file.
 export function exportableWatch(w) {

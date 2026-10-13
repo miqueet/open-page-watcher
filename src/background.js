@@ -6,6 +6,7 @@ import {
 } from './lib/alerts.js';
 import { pdfToText } from './lib/pdf.js';
 import { getPolicy, checkSiteAllowed, applyPolicy } from './lib/policy.js';
+import { needsSignIn, signInError, SIGN_IN_MESSAGE } from './lib/signin.js';
 import {
   sanitizeWatch, exportableWatch, postProcess, isDue, nextCheckTime, originPattern, sameDocument, comparisonKey, isHttpUrl,
 } from './lib/watch.js';
@@ -138,13 +139,25 @@ async function checkWatch(id, { via = 'schedule', tabId } = {}) {
     if (via === 'live' && !watch.live) return;
     let result;
     let error = '';
+    let signIn = false;
+    let cookiesTurnedOn = false;
     try {
       checkSiteAllowed(policy, watch.url);
       const granted = await chrome.permissions.contains({ origins: [originPattern(watch.url)] });
       if (!granted) throw new Error('Access to this site has not been granted. Open the watch and click Allow.');
       if (via === 'live') result = await extractInTab(tabId, watch, { userTab: true });
       else if (watch.mode === 'tab') result = await renderAndExtract(watch);
-      else result = await fetchAndExtract(watch, policy);
+      else {
+        try {
+          result = await fetchAndExtract(watch, policy);
+        } catch (e) {
+          // The page wants the user signed in: try once with their cookies,
+          // and keep them on for this watch if that gets past the sign-in page.
+          if (!e?.signIn || watch.sendCookies || watch.autoCookies === false || policy.disableCookies) throw e;
+          result = await fetchAndExtract({ ...watch, sendCookies: true }, policy);
+          cookiesTurnedOn = true;
+        }
+      }
       if (result.text.length > MAX_TEXT_CHARS) {
         throw new Error('The watched text is over 2 million characters. Select part of the page instead.');
       }
@@ -152,14 +165,24 @@ async function checkWatch(id, { via = 'schedule', tabId } = {}) {
       result.text = postProcess(result.text, watch);
     } catch (e) {
       error = e?.message || String(e);
+      signIn = e?.signIn === true;
+      if (signIn) error = signInMessage(watch, policy);
     }
-    await record(watch, result, error, { via, started });
+    await record(watch, result, error, { via, started, signIn, cookiesTurnedOn });
   } finally {
     inFlight.delete(id);
   }
 }
 
-async function record(watch, result, error, { via, started }) {
+function signInMessage(watch, policy) {
+  if (watch.mode === 'fetch' && !watch.sendCookies) {
+    if (policy.disableCookies) return `${SIGN_IN_MESSAGE}. Your organization doesn't allow sending your cookies, which pages behind a sign-in need.`;
+    if (watch.autoCookies === false) return `${SIGN_IN_MESSAGE}. If you're signed in to the site, turn on “Send my cookies” for this watch.`;
+  }
+  return `${SIGN_IN_MESSAGE}. Sign in to the site in Chrome, then check again.`;
+}
+
+async function record(watch, result, error, { via, started, signIn = false, cookiesTurnedOn = false }) {
   const { id } = watch;
   const now = Date.now();
   const logEntry = { t: now, ok: !error, changed: false, alerted: false, error, ms: now - started, via };
@@ -172,10 +195,17 @@ async function record(watch, result, error, { via, started }) {
       if (via !== 'live') w.nextCheckAt = nextCheckTime(watch, now);
       w.lastError = error;
       w.errorCount = (w.errorCount || 0) + 1;
+      if (signIn) w.signInNeeded = true;
       return { ...w };
     });
     await appendLog(id, logEntry);
-    if (updated) await maybeAlertError(updated, now);
+    // A sign-in page gets the watch's own sign-in action instead of the
+    // "keeps failing" alert.
+    if (updated && signIn) {
+      if (via !== 'live' && !updated.signInHandled) await handleSignIn(updated, now).catch((e) => console.warn('Sign-in action failed', e));
+    } else if (updated) {
+      await maybeAlertError(updated, now);
+    }
     await broadcast({ type: 'changed', id });
     return;
   }
@@ -205,6 +235,7 @@ async function record(watch, result, error, { via, started }) {
     });
   }
   logEntry.alerted = alert;
+  if (cookiesTurnedOn) logEntry.note = 'Turned on “Send my cookies” because the page asked you to sign in';
   await updateWatches((all) => {
     const w = all[id];
     if (!w) return;
@@ -212,6 +243,10 @@ async function record(watch, result, error, { via, started }) {
     if (via !== 'live') w.nextCheckAt = nextCheckTime(watch, now);
     w.lastError = '';
     w.errorCount = 0;
+    if (cookiesTurnedOn) w.sendCookies = true;
+    if (w.signInHandled && w.onSignIn === 'pause') w.paused = false; // paused only until signed in
+    w.signInNeeded = false;
+    w.signInHandled = false;
     if (previous && changed) {
       w.lastChangedAt = now;
       w.lastSummary = summarizeChange(previous.text, result.text, 160);
@@ -236,6 +271,7 @@ async function fetchAndExtract(watch, policy) {
       redirect: 'follow',
       signal: controller.signal,
     });
+    if (needsSignIn({ status: response.status, watchUrl: watch.url, finalUrl: response.url || watch.url })) throw signInError();
     if (!response.ok) throw new Error(`The site answered with HTTP ${response.status}`);
     if (response.redirected) await checkRedirect(watch, response.url, policy);
     const isPdf = /application\/pdf/i.test(response.headers.get('content-type') || '');
@@ -279,6 +315,9 @@ async function fetchAndExtract(watch, policy) {
     mime: /xml/i.test(contentType) && !/html/i.test(contentType) ? 'application/xml' : 'text/html',
     spec: extractSpec(watch, response.url || watch.url),
   });
+  if (result && needsSignIn({
+    watchUrl: watch.url, finalUrl: response.url || watch.url, signInForm: result.signInForm, title: result.title, found: result.ok,
+  })) throw signInError();
   if (!result?.ok) throw new Error(result?.error || 'Could not read the page');
   return result;
 }
@@ -338,6 +377,7 @@ async function renderAndExtract(watch) {
     await waitForTabComplete(tabId);
     await new Promise((r) => setTimeout(r, watch.renderDelaySeconds * 1000));
     const tab = await chrome.tabs.get(tabId);
+    if (tab.url && needsSignIn({ watchUrl: watch.url, finalUrl: tab.url })) throw signInError();
     if (!tab.url || new URL(tab.url).origin !== new URL(watch.url).origin) {
       throw new Error('The page redirected to a different site');
     }
@@ -367,6 +407,9 @@ async function extractInTab(tabId, watch, { userTab = false, expect = null } = {
     .sort((a, b) => a.frameId - b.frameId)
     .map((i) => i.result)
     .filter((r) => r?.ok);
+  if (main && needsSignIn({
+    watchUrl: watch.url, finalUrl: tab.url || watch.url, signInForm: main.signInForm, title: main.title, found: found.length > 0,
+  })) throw signInError();
   if (!found.length) throw new Error(main?.error || 'Could not read the page');
   const html = found.map((r) => r.html || '').join('');
   return {
@@ -573,24 +616,104 @@ async function maybeAlertError(watch, now) {
   }).catch(() => {});
 }
 
-function watchIdFromNotification(notificationId) {
-  const m = /^watch:([a-z0-9-]+):\d+$/i.exec(notificationId);
-  return m ? m[1] : null;
+// Notification ids are "watch:<id>:<time>", "signin:<id>:<time>" or "digest:<time>".
+function parseNotification(notificationId) {
+  const m = /^(watch|signin):([a-z0-9-]+):\d+$/i.exec(notificationId);
+  return m ? { kind: m[1], id: m[2] } : { kind: '', id: null };
 }
 
 chrome.notifications.onClicked.addListener((notificationId) => {
-  const id = watchIdFromNotification(notificationId);
-  if (id || notificationId.startsWith('digest:')) openInbox(id);
+  const { kind, id } = parseNotification(notificationId);
+  if (kind === 'signin') openSignInTab(id).catch(() => {});
+  else if (id || notificationId.startsWith('digest:')) openInbox(id);
   chrome.notifications.clear(notificationId);
 });
 
 chrome.notifications.onButtonClicked.addListener(async (notificationId, buttonIndex) => {
-  const id = watchIdFromNotification(notificationId);
+  const { kind, id } = parseNotification(notificationId);
   chrome.notifications.clear(notificationId);
   if (notificationId.startsWith('digest:')) return openInbox(null);
   if (!id) return;
+  if (kind === 'signin') {
+    if (buttonIndex === 0) return openSignInTab(id).catch(() => {});
+    return openInbox(id);
+  }
   if (buttonIndex === 0) return openInbox(id);
   openPage(id).catch(() => {});
+});
+
+// ---------------------------------------------------------------------------
+// Sign-in pages
+
+// Does what the watch asks for when a check lands on a sign-in page. It runs
+// once until a check gets through again, so the user isn't asked on every check.
+async function handleSignIn(watch, now) {
+  const action = watch.onSignIn || 'notify';
+  if (action === 'nothing') return;
+  if (action === 'notify') {
+    if (inQuietHours(await getSettings(), new Date(now))) return; // asked again after quiet hours
+    await chrome.notifications.create(`signin:${watch.id}:${now}`, {
+      type: 'basic',
+      iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+      title: `Sign in needed: ${watch.name}`.slice(0, 120),
+      message: `${new URL(watch.url).hostname} asked you to sign in, so the page couldn't be checked. Once you're signed in, checks pick up again.`,
+      buttons: [{ title: 'Open page to sign in' }, { title: 'View watch' }],
+      priority: 1,
+    });
+  } else if (action === 'tab') {
+    await openSignInTab(watch.id, { active: false });
+  }
+  await updateWatches((all) => {
+    const w = all[watch.id];
+    if (!w) return;
+    w.signInHandled = true;
+    if (action === 'pause') w.paused = true;
+  });
+  await broadcast({ type: 'changed', id: watch.id });
+}
+
+// Opens the watched page so the user can sign in. The watch is checked again
+// when that tab comes back to the page (sites usually return there after
+// signing in) or is closed.
+async function openSignInTab(id, { active = true } = {}) {
+  const watch = await getWatch(id);
+  if (!watch) throw new Error('Watch not found');
+  const tab = await chrome.tabs.create({ url: watch.url, active });
+  await serialize(async () => {
+    const { signInTabs = {} } = await chrome.storage.session.get('signInTabs');
+    signInTabs[tab.id] = id;
+    await chrome.storage.session.set({ signInTabs });
+  });
+}
+
+async function forgetSignInTab(tabId) {
+  return serialize(async () => {
+    const { signInTabs = {} } = await chrome.storage.session.get('signInTabs');
+    const id = signInTabs[tabId];
+    if (id) {
+      delete signInTabs[tabId];
+      await chrome.storage.session.set({ signInTabs });
+    }
+    return id;
+  });
+}
+
+chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
+  if (info.status !== 'complete') return;
+  const { signInTabs = {} } = await chrome.storage.session.get('signInTabs');
+  const id = signInTabs[tabId];
+  if (!id) return;
+  const watch = await getWatch(id);
+  if (!watch?.signInNeeded) {
+    await forgetSignInTab(tabId);
+    return;
+  }
+  if (sameDocument(tab.url || '', watch.url)) checkWatch(id);
+});
+
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  const id = await forgetSignInTab(tabId);
+  if (id && (await getWatch(id))?.signInNeeded) checkWatch(id);
 });
 
 // Opens the watched page and highlights what the latest change added.
@@ -712,6 +835,7 @@ const uiHandlers = {
     const rescheduled = before.intervalMinutes !== clean.intervalMinutes
       || JSON.stringify(before.schedule) !== JSON.stringify(clean.schedule);
     if (rescheduled) clean.nextCheckAt = nextCheckTime(clean, clean.lastCheckedAt || Date.now());
+    if (before.onSignIn !== clean.onSignIn) clean.signInHandled = false; // act on the new choice next check
     await updateWatches((all) => {
       all[clean.id] = clean;
     });
@@ -744,6 +868,11 @@ const uiHandlers = {
 
   async openPage({ id }) {
     return { highlighted: await openPage(id) };
+  },
+
+  async openSignIn({ id }) {
+    await openSignInTab(id);
+    return {};
   },
 
   async releaseUnusedAccess() {
@@ -782,7 +911,10 @@ const uiHandlers = {
         const w = all[id];
         switch (action) {
           case 'pause': w.paused = true; break;
-          case 'resume': w.paused = false; break;
+          case 'resume':
+            w.paused = false;
+            w.signInHandled = false; // if it still asks for a sign-in, act on it again
+            break;
           case 'markRead': w.unread = false; break;
           case 'markUnread': w.unread = true; break;
           case 'addLabel':
