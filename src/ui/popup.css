@@ -1,0 +1,13 @@
+body { width: 360px; }
+header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+section { padding: 12px; }
+section + section { border-top: 1px solid var(--border); }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 8px; }
+.title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.actions { display: flex; gap: 8px; margin-top: 10px; }
+.actions button { flex: 1; }
+#page-error { margin-top: 8px; }
+ul { list-style: none; margin: 0; padding: 0; }
+li button { width: 100%; text-align: left; display: flex; gap: 8px; align-items: center; border: none; padding: 6px 4px; }
+li .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
