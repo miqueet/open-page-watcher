@@ -1,18 +1,39 @@
 # Open Page Watcher
 
-An open-source, security-conscious Chrome extension that watches web pages for
-changes and alerts you, similar to Distill Web Monitor.
+A privacy- and security-first Chrome extension that watches web pages for
+changes and alerts you, similar to Distill Web Monitor. Everything happens on
+your computer: no servers, no accounts and no data collection of any kind.
+
+## Private and local by design
+
+Open Page Watcher is built on one rule: **your data stays on your device.**
+
+- **Everything is local.** Your watches, the page versions it saves, its check
+  log and your settings live only in your browser's own extension storage.
+  Removing the extension deletes them.
+- **No data collection.** No analytics, telemetry, tracking, crash reports, ads
+  or accounts. The developer never learns which pages you watch or what's on
+  them.
+- **No servers.** The only network requests it makes are to the pages you ask it
+  to watch, the same as opening them yourself.
+- **Security first.** It asks for access to a site only when you watch it and
+  gives it back when you stop. Pages are read without running their scripts
+  unless you choose otherwise. Your cookies only ever go to the site being
+  watched, and only for pages that need you to sign in.
+- **Nothing hidden.** No remote code, no build step and no third-party
+  dependencies, so the code in this repository is exactly what runs.
+
+Features that would need your data to leave your computer, such as cloud sync,
+email or SMS alerts and AI summaries, are deliberately left out and won't be
+added. See [PRIVACY.md](PRIVACY.md) and the security model in
+[docs/SPEC.md](docs/SPEC.md#security-model).
 
 ## Why
 
 Popular page-monitoring extensions ask for access to every site, sync your data
 to vendor servers and ship code you can't easily audit, which makes them hard to
-approve for use at work. Open Page Watcher gives you the same core features with:
-
-- No servers, accounts, analytics or telemetry. Everything stays in your browser.
-- Access to a site only when you add a watch for it, released when you remove it.
-- No remote code, no build step and no third-party dependencies, so the code in
-  this repository is exactly what runs.
+approve for use at work. Open Page Watcher gives you the same core features
+without those trade-offs.
 
 This is a clean-room implementation written from scratch. It contains no code
 from Distill or any other proprietary extension.
@@ -31,9 +52,18 @@ from Distill or any other proprietary extension.
 - Right-click any page or link to watch it, or press Alt+Shift+W to pick parts
 
 **When to check**
-- Every minute up to every 7 days, or at a random time within a range
+- Every minute up to every 7 days (drag a slider or type an exact value), or at
+  a random time within a range
 - Only during certain hours and days
 - Instantly while the page is open in a tab (live mode)
+
+**Pages behind a sign-in**
+- Notices when a page asks you to sign in, instead of saving the sign-in page
+  as a change
+- Once you're signed in, turns on your cookies for that watch by itself (you
+  can switch this off)
+- You choose what happens when a sign-in is needed: a notification, open the
+  page in a tab so you can sign in, pause the watch, or nothing
 
 **When to alert**
 - Rules combined with all/any: text contains, starts or ends with, is empty,
@@ -84,7 +114,8 @@ team can review this repository and publish it internally or allow-list it.
 - Chrome asks once per site for permission to read it. Watches on a site you
   haven't allowed show an **Allow** button in the inbox.
 - Open the inbox from the popup to see changes, edit how often a page is
-  checked, set alert conditions, or turn on cookies for pages behind a login.
+  checked, set alert conditions, or choose what happens when a page asks you to
+  sign in.
 
 ## Permissions
 
@@ -105,6 +136,19 @@ team can review this repository and publish it internally or allow-list it.
 npm test                    # unit tests, no dependencies needed
 PLAYWRIGHT=$(npm root -g)/playwright node test/e2e.mjs   # browser tests (needs Playwright + Chromium)
 ```
+
+## Feature requests and feedback
+
+Ideas are very welcome. If there's something you'd like Open Page Watcher to do,
+[open a feature request](https://github.com/miqueet/open-page-watcher/issues/new?template=feature_request.yml).
+Before you do, have a look at the
+[open requests](https://github.com/miqueet/open-page-watcher/issues?q=is%3Aissue+is%3Aopen+label%3Aenhancement)
+and give a 👍 to the ones you want, which helps decide what comes next.
+
+Anything that keeps your data on your computer is in scope. Requests that would
+need a server, an account or sending your data anywhere are not, for the reasons
+above. Found a bug? [Open an issue](https://github.com/miqueet/open-page-watcher/issues/new).
+Security problems go through [SECURITY.md](SECURITY.md) instead.
 
 ## Privacy
 
