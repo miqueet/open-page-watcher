@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Open Page Watcher</title>
+  <link rel="stylesheet" href="common.css">
+  <link rel="stylesheet" href="popup.css">
+  <script type="module" src="popup.js"></script>
+</head>
+<body>
+  <header>
+    <strong>Open Page Watcher</strong>
+    <button id="open-inbox">Open inbox</button>
+  </header>
+  <section id="page">
+    <div id="page-title" class="title"></div>
+    <div id="page-url" class="muted url"></div>
+    <div id="page-status" class="muted"></div>
+    <div class="actions">
+      <button id="watch-page" class="primary">Watch whole page</button>
+      <button id="pick-parts">Select parts of page</button>
+    </div>
+    <div id="page-error" class="error" hidden></div>
+  </section>
+  <section>
+    <h2>Recent changes</h2>
+    <ul id="recent"></ul>
+    <p id="recent-empty" class="muted" hidden>No unread changes.</p>
+  </section>
+</body>
+</html>

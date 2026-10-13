@@ -1,0 +1,10 @@
+{
+  "name": "open-page-watcher",
+  "private": true,
+  "type": "module",
+  "description": "Open-source Chrome extension that watches web pages for changes.",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}

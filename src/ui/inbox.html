@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Open Page Watcher</title>
+  <link rel="stylesheet" href="common.css">
+  <link rel="stylesheet" href="inbox.css">
+  <script type="module" src="inbox.js"></script>
+</head>
+<body>
+  <header class="top">
+    <strong class="brand">Open Page Watcher</strong>
+    <div class="tools">
+      <button id="add" class="primary">Add watch</button>
+      <button id="mark-all">Mark all read</button>
+      <button id="export">Export</button>
+      <button id="import">Import</button>
+      <input id="import-file" type="file" accept="application/json,.json" hidden>
+    </div>
+  </header>
+  <div class="layout">
+    <aside>
+      <div class="filters" role="tablist">
+        <button data-filter="all" class="active">All</button>
+        <button data-filter="unread">Unread</button>
+        <button data-filter="errors">Errors</button>
+        <button data-filter="paused">Paused</button>
+      </div>
+      <input id="search" type="search" placeholder="Search watches">
+      <ul id="list"></ul>
+      <p id="list-empty" class="muted" hidden></p>
+    </aside>
+    <main id="detail"></main>
+  </div>
+  <div id="toast" role="status" hidden></div>
+</body>
+</html>
