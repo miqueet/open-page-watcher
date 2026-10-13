@@ -58,7 +58,9 @@ These run on the device but were left out as security trade-offs:
    `unlimitedStorage`, `alarms`, `notifications`, `offscreen`, `activeTab`,
    `scripting`, `contextMenus` and `tts`. There are **no install-time host
    permissions**. Access to a site is requested per origin, when you add a watch
-   for it, and released when you delete the last watch on that origin.
+   for it (after checking organization policy), and released when you delete
+   the last watch on that origin, cancel the picker, or a save fails. Access no
+   watch uses is also cleaned up when the browser starts.
 3. **No remote code.** Manifest V3, no `eval`, no CDN scripts, no build step and
    no third-party dependencies (the PDF reader is written from scratch). Every
    file in `src/` is the code that runs.
@@ -74,29 +76,46 @@ These run on the device but were left out as security trade-offs:
    (no scripts, no same-origin access) with a CSP that blocks all network loads.
 7. **Cookies off by default.** Each watch has an explicit "send my cookies"
    switch for pages behind a login. When it is off, requests use
-   `credentials: "omit"`. Organizations can force it off.
+   `credentials: "omit"`. Render-in-tab mode always loads the page as the
+   signed-in user, so the organization setting that forces cookies off also
+   turns render-in-tab off.
 8. **Bounded work.** Requests time out after 30 seconds, pages over 5 MB and
-   PDFs over 20 MB are rejected, history and logs are capped per watch, and only
-   `http:` / `https:` URLs are accepted. PDF decompression stops at a size cap.
+   PDFs over 20 MB are rejected, watched text over 2 million characters is
+   refused, snapshots are capped at 300 KB, history and logs are capped per
+   watch, and only `http:` / `https:` URLs are accepted. PDF decompression and
+   interpretation stop at fixed caps, and JSON that would balloon when
+   pretty-printed is kept as sent. A redirect must stay on the same host or a
+   site the user has allowed, and on a site the organization allows.
 9. **Validated messages.** The service worker accepts UI requests only from its
-   own extension pages; web pages can only send the picker's selectors (the URL
-   and title come from Chrome, not the message) and a "something changed" ping
-   in live mode. Every field is validated.
+   own extension pages. From a web page, only the extension's own injected
+   scripts can send anything: the picker's selectors and a "something changed"
+   ping in live mode. A picker save is accepted only from the document the
+   picker was started in, for the address it had then (the page can't swap it
+   with `pushState`), and the picker ignores synthetic clicks and key presses,
+   so the page can't pick or save for the user. Every field is validated.
 10. **Scripts injected into pages are small and passive.** The picker runs only
     when you start it; the live-mode observer only reports that the page
-    changed; the highlighter only adds a CSS highlight. None of them read
-    cookies, storage or form fields.
+    changed; the highlighter only adds a CSS highlight. When a watch reads a
+    page, it can read element text and attributes plus a short list of safe
+    properties (such as an image's `currentSrc`), never `document.cookie` or
+    storage. Password, hidden and file inputs are always skipped, and in live
+    mode (the user's own tab) no form field or editable area is read at all,
+    incognito tabs are never read, and a check is dropped if the tab has moved
+    to another page.
 11. **Local data only.** Watches, history and logs live in
     `chrome.storage.local`. Backups are files you save yourself, and can be
     encrypted with AES-256-GCM using a key derived from your password with
     PBKDF2-SHA-256 (600,000 iterations). Imported encrypted files with
     unreasonable key-derivation settings are refused.
-12. **Spoken alerts stay on the device.** Only voices with `remote: false`
-    are used, so change text is never sent to an online speech service.
+12. **Spoken alerts stay on the device.** Only Chrome's own voices with
+    `remote: false` are used (not voices supplied by other extensions), so
+    change text is never sent to an online speech service.
 13. **Organization policy wins.** Settings from Chrome managed storage (allowed
     and blocked sites, no cookies, no render-in-tab, no live mode, minimum
-    interval, maximum watches) are applied when a watch is saved and again at
-    every check.
+    interval, maximum watches) are applied when a watch is saved, when it is
+    scheduled, and again at every check. Site entries are matched the way the
+    browser writes host names (punycode, no trailing dot), and an entry that
+    can't be read matches nothing.
 
 ## Architecture
 

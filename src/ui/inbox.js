@@ -3,12 +3,12 @@ import {
 } from './api.js';
 import { diffText } from '../lib/diff.js';
 import { RULE_TYPES, RULE_SOURCES, normalizeCondition } from '../lib/conditions.js';
-import { DEFAULT_INTERVAL_MINUTES, DEFAULT_HISTORY } from '../lib/watch.js';
+import { DEFAULT_INTERVAL_MINUTES, DEFAULT_HISTORY, isHttpUrl } from '../lib/watch.js';
 import { getLog, getSettings, DIGEST_CHOICES } from '../lib/storage.js';
 import { visualDocument, sourceLines } from './visual.js';
 import { numberSeries, numberChart } from './chart.js';
 import { encryptBackup, decryptBackup, isEncrypted } from '../lib/backup.js';
-import { getPolicy, isManaged } from '../lib/policy.js';
+import { getPolicy, isManaged, checkSiteAllowed } from '../lib/policy.js';
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -548,7 +548,7 @@ function watchForm(watch) {
     ignore: Object.fromEntries(['dates', 'numbers', 'case', 'whitespace'].map((k) => [k, el('input', { type: 'checkbox', checked: w.ignore?.[k] === true })])),
   };
   const policy = state.policy;
-  if (policy?.disableRenderInTab) f.mode.querySelector('option[value="tab"]').disabled = true;
+  if (policy?.disableRenderInTab || policy?.disableCookies) f.mode.querySelector('option[value="tab"]').disabled = true;
   if (policy?.disableLiveMode) f.live.disabled = true;
   if (policy?.disableCookies) f.sendCookies.disabled = true;
   if (policy?.minIntervalMinutes) f.every.title = `Your organization requires at least ${policy.minIntervalMinutes} minutes between checks`;
@@ -599,6 +599,16 @@ function watchForm(watch) {
       e.preventDefault();
       error.hidden = true;
       const url = f.url.value.trim();
+      // Check the organization's rules before asking Chrome for access, so
+      // access is never granted to a site that can't be watched.
+      try {
+        if (!isHttpUrl(url)) throw new Error('Enter a full http:// or https:// address.');
+        if (policy) checkSiteAllowed(policy, url);
+      } catch (err) {
+        error.hidden = false;
+        error.textContent = err.message;
+        return;
+      }
       // Ask for site access first, while we still have the click's user gesture.
       let granted = false;
       try {
@@ -647,6 +657,7 @@ function watchForm(watch) {
       } catch (err) {
         error.hidden = false;
         error.textContent = err.message;
+        if (granted) call('releaseUnusedAccess').catch(() => {});
       }
     },
   },

@@ -40,14 +40,18 @@ set by the organization.
 | --- | --- | --- |
 | `allowedSites` | list of strings | Only these sites can be watched. `example.com` also covers its subdomains. |
 | `blockedSites` | list of strings | These sites can never be watched. Takes priority over `allowedSites`. |
-| `disableCookies` | boolean | Checks never include the user's cookies. |
+| `disableCookies` | boolean | Checks never use the user's signed-in session: no cookies are sent, and render-in-tab mode (which loads the page as the user) is off. |
 | `disableRenderInTab` | boolean | Pages are only downloaded and parsed; their scripts never run. |
 | `disableLiveMode` | boolean | The extension never observes open tabs. |
 | `minIntervalMinutes` | integer | Checks run at most this often. Shorter intervals are raised to it. |
 | `maxWatches` | integer | Users can't add more watches than this. |
 
 Site entries can be written as `example.com`, `*.example.com`,
-`https://example.com/some/path` or with a port; only the host name is used.
+`https://example.com/some/path` or with a port; only the host name is used, and
+international names match in either form. `*` in `blockedSites` blocks every
+site. An entry that isn't a host name matches nothing, so a mistyped allow-list
+allows nothing rather than everything. If a watched page redirects, the site it
+lands on must be allowed too.
 
 ### Google Admin console
 

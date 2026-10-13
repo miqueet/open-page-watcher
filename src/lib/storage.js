@@ -35,7 +35,8 @@ export async function getWatches() {
 }
 
 export async function getWatch(id) {
-  return (await getWatches())[id] || null;
+  const all = await getWatches();
+  return typeof id === 'string' && Object.hasOwn(all, id) ? all[id] : null;
 }
 
 export function updateWatches(mutator) {
