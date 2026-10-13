@@ -106,3 +106,16 @@ test('sameDocument ignores fragments only', async () => {
   assert.equal(sameDocument('https://a.com/x#1', 'https://a.com/x#2'), true);
   assert.equal(sameDocument('https://a.com/x?a=1', 'https://a.com/x?a=2'), false);
 });
+
+test('ignore options normalize what counts as a change', async () => {
+  const { comparisonKey } = await import('../src/lib/watch.js');
+  const a = 'Updated Oct 12, 2026 at 9:15 am. Price $10. 3 minutes ago';
+  const b = 'Updated Oct 13, 2026 at 10:02 am. Price $10. 1 hour ago';
+  assert.notEqual(comparisonKey(a), comparisonKey(b));
+  assert.equal(comparisonKey(a, { dates: true }), comparisonKey(b, { dates: true }));
+  assert.notEqual(comparisonKey('Price $10', { dates: true }), comparisonKey('Price $12', { dates: true }));
+  assert.equal(comparisonKey('Price $10', { numbers: true }), comparisonKey('Price $12', { numbers: true }));
+  assert.equal(comparisonKey('In  Stock\n', { whitespace: true, case: true }), comparisonKey('in stock', { whitespace: true, case: true }));
+  assert.deepEqual(sanitizeWatch({ url: 'https://e.com', ignore: { dates: 1, numbers: true } }).ignore,
+    { case: false, whitespace: false, numbers: true, dates: false });
+});
