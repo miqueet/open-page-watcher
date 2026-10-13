@@ -16,7 +16,11 @@ function hostList(list) {
   return list
     .filter((h) => typeof h === 'string' && h.trim())
     .slice(0, 1000)
-    .map((h) => h.trim().toLowerCase().replace(/^\*\./, '').replace(/^https?:\/\//, '').replace(/\/.*$/, ''));
+    .map((h) => h.trim().toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/\/.*$/, '')
+      .replace(/:\d+$/, '')
+      .replace(/^\*\./, ''));
 }
 
 export function normalizePolicy(raw = {}) {

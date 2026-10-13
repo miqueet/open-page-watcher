@@ -36,3 +36,9 @@ test('bad policy values are ignored', () => {
   assert.equal(p.maxWatches, null);
   assert.equal(p.disableCookies, false);
 });
+
+test('site entries may include a scheme, wildcard and port', () => {
+  const p = normalizePolicy({ allowedSites: ['https://*.corp.example:8443/app'] });
+  assert.deepEqual(p.allowedSites, ['corp.example']);
+  checkSiteAllowed(p, 'https://wiki.corp.example:8443/page');
+});
