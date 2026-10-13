@@ -33,11 +33,14 @@ from Distill or any other proprietary extension.
 See [docs/SPEC.md](docs/SPEC.md) for how this maps to Distill's features, what is
 deliberately left out, and the full security model.
 
-## Install (unpacked)
+## Install
 
-1. Download this repository (Code → Download ZIP) and unzip it, or `git clone` it.
+1. Download the latest `open-page-watcher-vX.Y.Z.zip` from
+   [Releases](https://github.com/miqueet/open-page-watcher/releases/latest) and unzip it.
 2. Open `chrome://extensions` and turn on **Developer mode**.
-3. Click **Load unpacked** and choose the folder that contains `manifest.json`.
+3. Click **Load unpacked** and choose the unzipped folder (the one that contains `manifest.json`).
+
+Each release also has a `.sha256` file so you can check the zip wasn't altered.
 
 Managed work machines sometimes block unpacked extensions. In that case your IT
 team can review this repository and publish it internally or allow-list it.
