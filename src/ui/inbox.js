@@ -3,12 +3,13 @@ import {
 } from './api.js';
 import { diffText } from '../lib/diff.js';
 import { RULE_TYPES, RULE_SOURCES, normalizeCondition } from '../lib/conditions.js';
-import { DEFAULT_INTERVAL_MINUTES, DEFAULT_HISTORY, isHttpUrl } from '../lib/watch.js';
+import { DEFAULT_INTERVAL_MINUTES, DEFAULT_HISTORY, SIGN_IN_ACTIONS, isHttpUrl } from '../lib/watch.js';
 import { getLog, getSettings, DIGEST_CHOICES } from '../lib/storage.js';
 import { visualDocument, sourceLines } from './visual.js';
 import { numberSeries, numberChart } from './chart.js';
 import { encryptBackup, decryptBackup, isEncrypted } from '../lib/backup.js';
 import { getPolicy, isManaged, checkSiteAllowed } from '../lib/policy.js';
+import { SIGN_IN_MESSAGE } from '../lib/signin.js';
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -189,6 +190,18 @@ async function renderDetail() {
       },
     }, 'Allow'));
 
+  // The sign-in error carries advice (e.g. turn on cookies), so the banner shows it.
+  const signInText = watch.lastError.startsWith(SIGN_IN_MESSAGE) ? watch.lastError : '';
+  const signInBanner = watch.signInNeeded ? el('div', { class: 'banner' },
+    el('span', {}, watch.paused
+      ? `Paused because ${new URL(watch.url).hostname} asked you to sign in. Sign in, then click Resume.`
+      : signInText || `${new URL(watch.url).hostname} asked you to sign in, so this page can't be checked. Sign in, then check again.`),
+    el('button', {
+      class: 'primary',
+      title: 'Opens the page in a new tab. Once you’re signed in and back on the page, it’s checked again.',
+      onclick: () => call('openSignIn', { id }).catch((e) => toast(e.message)),
+    }, 'Open page to sign in')) : null;
+
   const schedule = watch.schedule?.type === 'random'
     ? `randomly every ${watch.intervalMinutes}–${watch.schedule.randomMaxMinutes} min`
     : formatInterval(watch.intervalMinutes);
@@ -197,6 +210,7 @@ async function renderDetail() {
     watch.lastChangedAt ? `changed ${timeAgo(watch.lastChangedAt)}` : 'no changes yet',
     schedule + (watch.schedule?.window?.enabled ? ` (${watch.schedule.window.start}–${watch.schedule.window.end})` : ''),
     watch.mode === 'tab' ? 'renders in a tab' : 'fetched without running scripts',
+    watch.mode !== 'tab' && watch.sendCookies ? 'sends your cookies' : null,
     watch.live ? 'live while open' : null,
     watch.selectors.length ? `${watch.selectors.length} selected part${watch.selectors.length > 1 ? 's' : ''}` : 'whole page',
   ].filter(Boolean).join(' · ');
@@ -207,7 +221,8 @@ async function renderDetail() {
     el('div', { class: 'meta muted' }, meta),
     watch.lastSummary ? el('p', { class: 'summary' }, `Latest change: ${watch.lastSummary}`) : null,
     banner,
-    watch.lastError ? el('p', { class: 'error' }, watch.lastError) : null,
+    signInBanner,
+    watch.lastError && !(signInBanner && signInText && !watch.paused) ? el('p', { class: 'error' }, watch.lastError) : null,
     el('div', { class: 'row' },
       el('button', {
         class: 'primary',
@@ -432,7 +447,8 @@ function logView(log) {
   if (!log.length) return null;
   const rows = log.slice().reverse().map((e) => el('tr', {},
     el('td', {}, new Date(e.t).toLocaleString()),
-    el('td', { class: e.ok ? '' : 'error' }, e.ok ? (e.changed ? (e.alerted ? 'Changed, alerted' : 'Changed') : 'No change') : e.error),
+    el('td', { class: e.ok ? '' : 'error' }, e.ok ? (e.changed ? (e.alerted ? 'Changed, alerted' : 'Changed') : 'No change') : e.error,
+      e.note ? el('div', { class: 'hint' }, e.note) : null),
     el('td', { class: 'muted' }, e.via === 'live' ? 'live' : ''),
     el('td', { class: 'muted' }, `${(e.ms / 1000).toFixed(1)} s`)));
   return el('details', { class: 'log' },
@@ -447,6 +463,40 @@ function intervalParts(minutes) {
   if (minutes % 1440 === 0) return [minutes / 1440, 1440];
   if (minutes % 60 === 0) return [minutes / 60, 60];
   return [minutes, 1];
+}
+
+// Stops on the "how often" slider, in minutes: 1 minute up to 1 week.
+const INTERVAL_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 180, 360, 720, 1440, 2880, 4320, 10080];
+
+// A range slider that moves through INTERVAL_STEPS and stays in sync with the
+// number and unit fields, which still accept any value.
+function intervalSlider(every, unit, minMinutes) {
+  const allowed = INTERVAL_STEPS.filter((m) => m >= minMinutes);
+  const steps = allowed.length ? allowed : INTERVAL_STEPS.slice(-1);
+  const label = (m) => { const s = formatInterval(m); return s[0].toUpperCase() + s.slice(1); };
+  const slider = el('input', { type: 'range', min: 0, max: steps.length - 1, step: 1, 'aria-label': 'How often to check' });
+  const fromFields = () => {
+    const minutes = Number(every.value) * Number(unit.value);
+    if (!(minutes > 0)) return;
+    let best = 0;
+    steps.forEach((m, i) => {
+      if (Math.abs(Math.log(m / minutes)) < Math.abs(Math.log(steps[best] / minutes))) best = i;
+    });
+    slider.value = String(best);
+    slider.setAttribute('aria-valuetext', label(minutes));
+  };
+  slider.addEventListener('input', () => {
+    const minutes = steps[Number(slider.value)];
+    const [n, u] = intervalParts(minutes);
+    every.value = String(n);
+    unit.value = String(u);
+    slider.setAttribute('aria-valuetext', label(minutes));
+  });
+  every.addEventListener('input', fromFields);
+  unit.addEventListener('change', fromFields);
+  fromFields();
+  return el('div', { class: 'interval-slider' }, slider,
+    el('div', { class: 'slider-ends hint' }, el('span', {}, label(steps[0])), el('span', {}, label(steps[steps.length - 1]))));
 }
 
 // Selector lines: "css selector", "xpath://expr", optionally ending in " @attr".
@@ -507,7 +557,7 @@ const PRESETS = [
 function watchForm(watch) {
   const w = watch || {
     name: '', url: '', selectors: [], excludes: [], regexFilter: '', mode: 'fetch', renderDelaySeconds: 3,
-    includeFrames: false, live: false, sendCookies: false, intervalMinutes: DEFAULT_INTERVAL_MINUTES,
+    includeFrames: false, live: false, sendCookies: false, autoCookies: true, onSignIn: 'notify', intervalMinutes: DEFAULT_INTERVAL_MINUTES,
     schedule: { type: 'interval', randomMaxMinutes: DEFAULT_INTERVAL_MINUTES * 2, window: { enabled: false, days: [1, 2, 3, 4, 5], start: '09:00', end: '17:00' } },
     historyLimit: DEFAULT_HISTORY, condition: { match: 'all', rules: [] }, notify: true, sound: false, labels: [],
   };
@@ -540,6 +590,12 @@ function watchForm(watch) {
     includeFrames: el('input', { type: 'checkbox', checked: w.includeFrames }),
     live: el('input', { type: 'checkbox', checked: w.live }),
     sendCookies: el('input', { type: 'checkbox', checked: w.sendCookies }),
+    autoCookies: el('input', { type: 'checkbox', checked: w.autoCookies !== false }),
+    onSignIn: el('select', {},
+      el('option', { value: 'notify' }, 'Send me a notification'),
+      el('option', { value: 'tab' }, 'Open the page in a new tab so I can sign in'),
+      el('option', { value: 'pause' }, 'Pause the watch until I sign in'),
+      el('option', { value: 'nothing' }, 'Do nothing (it still shows in the inbox)')),
     match: el('select', {}, el('option', { value: 'all' }, 'all'), el('option', { value: 'any' }, 'any')),
     notify: el('input', { type: 'checkbox', checked: w.notify }),
     sound: el('input', { type: 'checkbox', checked: w.sound }),
@@ -550,12 +606,16 @@ function watchForm(watch) {
   const policy = state.policy;
   if (policy?.disableRenderInTab || policy?.disableCookies) f.mode.querySelector('option[value="tab"]').disabled = true;
   if (policy?.disableLiveMode) f.live.disabled = true;
-  if (policy?.disableCookies) f.sendCookies.disabled = true;
+  if (policy?.disableCookies) {
+    f.sendCookies.disabled = true;
+    f.autoCookies.disabled = true;
+  }
   if (policy?.minIntervalMinutes) f.every.title = `Your organization requires at least ${policy.minIntervalMinutes} minutes between checks`;
   f.selectors.value = selectorsToText(w.selectors);
   f.excludes.value = selectorsToText(w.excludes || []);
   f.mode.value = w.mode;
   f.scheduleType.value = schedule.type;
+  f.onSignIn.value = SIGN_IN_ACTIONS.includes(w.onSignIn) ? w.onSignIn : 'notify';
   f.match.value = condition.match;
 
   const rules = el('div', { class: 'rules' });
@@ -571,8 +631,14 @@ function watchForm(watch) {
       el('div', { class: 'hint' }, 'Only frames from sites you have allowed are read.')));
   const cookieRow = el('label', { class: 'check' }, f.sendCookies,
     el('span', {}, 'Send my cookies for this site',
-      el('div', { class: 'hint' }, 'Needed for pages behind a login. Off by default so watches can’t act as you.')));
+      el('div', { class: 'hint' }, 'Needed for pages behind a login. Cookies only ever go to this site.')));
+  const autoCookiesRow = el('label', { class: 'check' }, f.autoCookies,
+    el('span', {}, 'Turn this on by itself if the page asks me to sign in',
+      el('div', { class: 'hint' }, 'The check is tried once more with your cookies, and they stay on only if that gets past the sign-in page.')));
+  const signInRow = el('label', { class: 'field' }, el('span', {}, 'If the page asks me to sign in'), f.onSignIn,
+    el('span', { class: 'hint' }, 'This happens once, not on every check. After you sign in, checks pick up again by themselves.'));
   const randomRow = el('span', { class: 'inline' }, 'and', f.randomMax, f.randomUnit);
+  const sliderRow = intervalSlider(f.every, f.unit, policy?.minIntervalMinutes || 0);
   const windowRow = el('div', { class: 'field' },
     el('div', { class: 'inline' }, 'Between', f.windowStart, 'and', f.windowEnd),
     el('div', { class: 'days' }, ...f.days.map((d) => el('label', {}, d, d.getAttribute('aria-label')))));
@@ -582,6 +648,7 @@ function watchForm(watch) {
     delayRow.hidden = f.mode.value !== 'tab';
     framesRow.hidden = f.mode.value !== 'tab';
     cookieRow.hidden = f.mode.value === 'tab';
+    autoCookiesRow.hidden = f.mode.value === 'tab' || f.sendCookies.checked || Boolean(policy?.disableCookies);
     randomRow.hidden = f.scheduleType.value !== 'random';
     windowRow.hidden = !f.windowOn.checked;
     matchRow.hidden = rules.children.length < 2;
@@ -590,6 +657,7 @@ function watchForm(watch) {
   f.mode.addEventListener('change', sync);
   f.scheduleType.addEventListener('change', sync);
   f.windowOn.addEventListener('change', sync);
+  f.sendCookies.addEventListener('change', sync);
   sync();
 
   const error = el('p', { class: 'error', hidden: true });
@@ -642,6 +710,8 @@ function watchForm(watch) {
         includeFrames: f.includeFrames.checked,
         live: f.live.checked,
         sendCookies: f.sendCookies.checked,
+        autoCookies: f.autoCookies.checked,
+        onSignIn: f.onSignIn.value,
         condition: { match: f.match.value, rules: [...rules.children].map((r) => r.read()) },
         notify: f.notify.checked,
         sound: f.sound.checked,
@@ -690,6 +760,7 @@ function watchForm(watch) {
         el('label', {}, f.ignore.whitespace, 'Spacing')))),
   el('fieldset', {}, el('legend', {}, 'When to check'),
     el('div', { class: 'inline' }, f.scheduleType, f.every, f.unit, randomRow),
+    sliderRow,
     el('label', { class: 'check' }, f.windowOn, el('span', {}, 'Only check during certain hours')),
     windowRow,
     el('label', { class: 'check' }, f.live,
@@ -699,7 +770,9 @@ function watchForm(watch) {
     el('label', { class: 'field' }, f.mode),
     delayRow,
     framesRow,
-    cookieRow),
+    cookieRow,
+    autoCookiesRow,
+    signInRow),
   el('fieldset', {}, el('legend', {}, 'Alerts'),
     matchRow,
     rules,

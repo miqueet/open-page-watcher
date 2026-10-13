@@ -41,12 +41,13 @@ Watch web pages for changes. Open source, no servers, no tracking, per-site perm
 > • Inbox with labels, bulk actions, keyboard shortcuts, a price/number chart and
 >   text, side-by-side and visual comparisons
 > • Open the page with what changed highlighted
+> • Notices when a page asks you to sign in, and lets you choose what happens
 > • Password-protected backups
 >
 > Built for people who can't install trackers on their work browser:
 > • No servers, accounts, analytics or telemetry. Your data stays in your browser.
 > • Asks for access to a site only when you watch it, and gives it back when you stop.
-> • Cookies are off by default for every watch.
+> • Your cookies only go to the site being watched, and only for pages that need you to sign in.
 > • Pages are read without running their scripts unless you choose otherwise.
 > • IT teams can restrict sites and options through Chrome policy.
 > • 100% open source (MIT): https://github.com/miqueet/open-page-watcher
