@@ -23,6 +23,7 @@ manifest.host_permissions = ['http://127.0.0.1/*'];
 fs.writeFileSync(path.join(extDir, 'manifest.json'), JSON.stringify(manifest));
 
 let price = '$10';
+let stock = 'In stock';
 let cookieSeen = null;
 let trackerHits = 0;
 let feedItems = ['Hello world', 'Second post'];
@@ -34,7 +35,7 @@ const server = http.createServer((req, res) => {
     return res.end(`<!doctype html><title>Product</title>
       <script>window.ran = true; document.title = 'scripts ran';</script>
       <style>.x{}</style>
-      <h1>Widget</h1><p id="price">${price}</p><p class="stock">In stock</p>
+      <h1>Widget</h1><p id="price">${price}</p><p class="stock">${stock}</p>
       <img src="/tracker.png" alt="photo">`);
   }
   if (req.url === '/dynamic') {
@@ -284,6 +285,38 @@ try {
     assert.equal(total, n * 2);
   });
 
+  await step('password-protected export and import', async () => {
+    const before = Object.keys((await page.evaluate(() => chrome.storage.local.get('watches'))).watches);
+    await page.evaluate(() => { location.hash = '#/'; });
+    await page.click('#export');
+    await page.check('#backup-protect');
+    await page.fill('#backup-password', 'correct horse');
+    await page.fill('#backup-password2', 'correct horse');
+    const [download] = await Promise.all([page.waitForEvent('download'), page.click('dialog button:text("Export")')]);
+    const file = path.join(userData, 'backup.json');
+    await download.saveAs(file);
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.equal(saved.format, 'open-page-watcher-encrypted');
+    assert.ok(!fs.readFileSync(file, 'utf8').includes('127.0.0.1'), 'addresses are not readable');
+
+    await page.setInputFiles('#import-file', file);
+    await page.fill('#import-password', 'wrong password');
+    await page.click('dialog button:text("Unlock")');
+    await page.waitForSelector('#toast:text("Wrong password")');
+    await page.setInputFiles('#import-file', file);
+    await page.fill('#import-password', 'correct horse');
+    await page.click('dialog button:text("Unlock")');
+    await page.click('dialog button:text("Cancel")'); // keep current settings
+    await page.waitForSelector(`#toast:text("Imported ${before.length} watches")`);
+    const after = Object.keys((await page.evaluate(() => chrome.storage.local.get('watches'))).watches);
+    await send({ type: 'bulk', ids: after.filter((id) => !before.includes(id)), action: 'delete' });
+  });
+
+  await step('keyboard shortcut is registered', async () => {
+    const commands = await sw.evaluate(() => chrome.commands.getAll());
+    assert.ok(commands.some((c) => c.name === 'watch-part'));
+  });
+
   await step('delete removes the watch and its history', async () => {
     await send({ type: 'deleteWatch', id: priceId });
     assert.equal(await watchOf(priceId), undefined);
@@ -422,6 +455,27 @@ try {
     await page.keyboard.press('ArrowLeft');
     assert.match(await page.textContent('.num-tip'), /^12 \(\+2\)/);
     await page.evaluate(() => { location.hash = '#/'; });
+    await send({ type: 'deleteWatch', id });
+  });
+
+  await step('opening the page highlights what changed', async () => {
+    const id = (await send({ type: 'createWatch', watch: { url: `${base}/product`, selectors: [{ type: 'css', expr: '.stock' }] } })).id;
+    await waitFor(async () => (await history(id)).length === 1);
+    stock = 'Only 3 left';
+    await send({ type: 'checkNow', id });
+    const opened = context.waitForEvent('page');
+    const res = await send({ type: 'openPage', id });
+    assert.equal(res.highlighted, 1);
+    const tab = await opened;
+    const highlighted = await tab.evaluate(() => {
+      const h = CSS.highlights.get('open-page-watcher-change');
+      return h ? [...h].map((r) => r.toString()) : null;
+    }).catch(() => 'isolated');
+    // The highlight lives in the extension's isolated world; the page sees the
+    // same registry because highlights belong to the document.
+    assert.deepEqual(highlighted, ['Only 3 left']);
+    await tab.close();
+    stock = 'In stock';
     await send({ type: 'deleteWatch', id });
   });
 

@@ -42,6 +42,27 @@ export function firstNumber(text) {
   return Number.isFinite(n) ? n : null;
 }
 
+// Runs of changed words in a modified line. A run carries on across spaces
+// but stops at an unchanged word: "Price is 10 dollars today" -> "Price is
+// 12 dollars now" added "12" and "now", not "12now".
+function changedRuns(parts, op) {
+  const runs = [];
+  let run = null;
+  for (const p of parts) {
+    if (p.op === op) {
+      run = (run ?? '') + p.value;
+    } else if (p.op === 'eq') {
+      if (run !== null && /^\s*$/.test(p.value)) run += p.value;
+      else if (run !== null) {
+        runs.push(run.trim());
+        run = null;
+      }
+    }
+  }
+  if (run !== null) runs.push(run.trim());
+  return runs.filter(Boolean);
+}
+
 // Added and deleted text between two versions, one fragment per line.
 export function changedText(oldText, newText) {
   const added = [];
@@ -50,8 +71,8 @@ export function changedText(oldText, newText) {
     if (line.type === 'add') added.push(line.text);
     else if (line.type === 'del') deleted.push(line.text);
     else if (line.type === 'mod') {
-      added.push(line.parts.filter((p) => p.op === 'add').map((p) => p.value).join('').trim());
-      deleted.push(line.parts.filter((p) => p.op === 'del').map((p) => p.value).join('').trim());
+      added.push(...changedRuns(line.parts, 'add'));
+      deleted.push(...changedRuns(line.parts, 'del'));
     }
   }
   return { added: added.filter(Boolean).join('\n'), deleted: deleted.filter(Boolean).join('\n') };
