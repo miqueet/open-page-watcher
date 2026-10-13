@@ -54,3 +54,4 @@ a { color: var(--accent); }
 .banner { background: var(--warn-bg); color: var(--warn-fg); border-radius: 8px; padding: 10px 12px; display: flex; gap: 12px; align-items: center; justify-content: space-between; }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
 [hidden] { display: none !important; }
+input[type=checkbox] { width: auto; }

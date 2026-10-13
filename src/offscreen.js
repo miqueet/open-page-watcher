@@ -6,6 +6,10 @@ const parser = new DOMParser();
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id || message?.target !== 'offscreen') return false;
+  if (message.type === 'ping') {
+    sendResponse({ ok: true });
+    return false;
+  }
   if (message.type === 'extract') {
     try {
       const doc = parser.parseFromString(String(message.html), message.mime === 'application/xml' ? 'application/xml' : 'text/html');

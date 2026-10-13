@@ -96,6 +96,22 @@ try {
     }
   };
 
+  await step('checks started together all succeed while the page reader starts', async () => {
+    const results = await page.evaluate((b) => Promise.all([1, 2, 3, 4, 5].map(() => chrome.runtime.sendMessage(
+      { type: 'createWatch', watch: { url: `${b}/product`, selectors: [{ type: 'css', expr: 'h1' }] } }))), base);
+    const ids = results.map((r) => r.id);
+    const errors = async () => (await Promise.all(ids.map(watchOf))).map((w) => w.lastError);
+    await waitFor(async () => (await Promise.all(ids.map(watchOf))).every((w) => w.lastCheckedAt));
+    assert.deepEqual(await errors(), ['', '', '', '', '']);
+    // Close the offscreen document and race several checks against its restart.
+    for (let round = 0; round < 5; round++) {
+      await sw.evaluate(() => chrome.offscreen.closeDocument().catch(() => {}));
+      await Promise.all(ids.map((id) => send({ type: 'checkNow', id })));
+      assert.deepEqual(await errors(), ['', '', '', '', ''], `round ${round}`);
+    }
+    for (const id of ids) await send({ type: 'deleteWatch', id });
+  });
+
   let wholeId;
   await step('whole-page watch captures text without running scripts', async () => {
     const res = await send({ type: 'createWatch', watch: { url: `${base}/product` } });

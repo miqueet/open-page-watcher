@@ -222,24 +222,34 @@ function waitForTabComplete(tabId) {
 // ---------------------------------------------------------------------------
 // Offscreen document (HTML parsing and sound)
 
-let creatingOffscreen = null;
+let offscreenStarting = null;
 
-async function ensureOffscreen() {
-  const contexts = await chrome.runtime.getContexts({
-    contextTypes: ['OFFSCREEN_DOCUMENT'],
-    documentUrls: [chrome.runtime.getURL(OFFSCREEN_URL)],
-  });
-  if (contexts.length) return;
-  creatingOffscreen ||= chrome.offscreen
-    .createDocument({
-      url: OFFSCREEN_URL,
-      reasons: ['DOM_PARSER', 'AUDIO_PLAYBACK'],
-      justification: 'Parse fetched pages without running their scripts, and play alert sounds.',
-    })
-    .finally(() => {
-      creatingOffscreen = null;
+// Makes sure the offscreen document exists and is listening. Concurrent
+// callers share one attempt; the document can exist before its script has
+// registered its message listener, so we wait for it to answer a ping.
+function ensureOffscreen() {
+  offscreenStarting ||= (async () => {
+    const contexts = await chrome.runtime.getContexts({
+      contextTypes: ['OFFSCREEN_DOCUMENT'],
+      documentUrls: [chrome.runtime.getURL(OFFSCREEN_URL)],
     });
-  await creatingOffscreen;
+    if (!contexts.length) {
+      await chrome.offscreen.createDocument({
+        url: OFFSCREEN_URL,
+        reasons: ['DOM_PARSER', 'AUDIO_PLAYBACK'],
+        justification: 'Parse fetched pages without running their scripts, and play alert sounds.',
+      });
+    }
+    for (let i = 0; i < 100; i++) {
+      const pong = await chrome.runtime.sendMessage({ target: 'offscreen', type: 'ping' }).catch(() => null);
+      if (pong?.ok) return;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error('The page reader did not start');
+  })().finally(() => {
+    offscreenStarting = null;
+  });
+  return offscreenStarting;
 }
 
 // ---------------------------------------------------------------------------
