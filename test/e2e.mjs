@@ -102,6 +102,19 @@ const server = http.createServer((req, res) => {
     res.setHeader('content-type', 'text/plain');
     return res.end('another site');
   }
+  if (req.url === '/members') {
+    // Behind a sign-in: without the member cookie, sends you to the login page.
+    if (!/(^|; )member=1/.test(req.headers.cookie || '')) {
+      res.writeHead(302, { location: '/login?next=/members' });
+      return res.end();
+    }
+    res.setHeader('content-type', 'text/html');
+    return res.end(`<!doctype html><title>Members</title><p id="secret">Members only ${price}</p>`);
+  }
+  if (req.url.startsWith('/login')) {
+    res.setHeader('content-type', 'text/html');
+    return res.end('<!doctype html><title>Log in</title><form><input name="user"><input type="password" name="pw"></form>');
+  }
   if (req.url === '/nested.json') {
     res.setHeader('content-type', 'application/json');
     return res.end(`${'['.repeat(3000)}${'1,'.repeat(5000)}1${']'.repeat(3000)}`);
@@ -677,6 +690,88 @@ try {
     const log = await page.evaluate(async (k) => (await chrome.storage.local.get(k))[k], `log:${res.id}`);
     assert.ok(log.some((e) => e.via === 'live'));
     await tab.close();
+  });
+
+  const members = { url: `${base}/members`, selectors: [{ type: 'css', expr: '#secret' }] };
+  const signedIn = (on) => (on ? context.addCookies([{ name: 'member', value: '1', url: base }]) : context.clearCookies({ name: 'member' }));
+
+  await step('a page behind a sign-in turns on cookies by itself once you are signed in', async () => {
+    await signedIn(false);
+    await clearNotifications();
+    const { id } = await send({ type: 'createWatch', watch: { ...members, name: 'Members' } });
+    let w = await waitFor(async () => { const x = await watchOf(id); return x.signInHandled && x; });
+    assert.match(w.lastError, /asked you to sign in/);
+    assert.equal(w.signInNeeded, true);
+    assert.equal(w.sendCookies, false);
+    assert.equal((await history(id)).length, 0, 'the login page is not saved as a version');
+    assert.ok((await notificationIds()).some((n) => n.startsWith(`signin:${id}:`)), 'sign-in notification shown');
+
+    // Asked once, not on every check.
+    await clearNotifications();
+    await send({ type: 'checkNow', id });
+    assert.equal((await notificationIds()).length, 0);
+
+    await signedIn(true);
+    await send({ type: 'checkNow', id });
+    w = await watchOf(id);
+    assert.equal(w.lastError, '');
+    assert.equal(w.sendCookies, true, 'cookies turned on');
+    assert.equal(w.signInNeeded, false);
+    assert.match((await history(id))[0].text, /Members only/);
+    const log = await page.evaluate(async (k) => (await chrome.storage.local.get(k))[k], `log:${id}`);
+    assert.match(log[log.length - 1].note, /Send my cookies/);
+    await send({ type: 'deleteWatch', id });
+  });
+
+  await step('cookies are not turned on by themselves when that option is off; render mode', async () => {
+    await signedIn(true);
+    const { id } = await send({ type: 'createWatch', watch: { ...members, autoCookies: false, onSignIn: 'nothing' } });
+    const w = await waitFor(async () => { const x = await watchOf(id); return x.lastError && x; });
+    assert.match(w.lastError, /turn on “Send my cookies”/);
+    assert.equal(w.sendCookies, false);
+    assert.equal(w.signInHandled, false, 'do nothing takes no action');
+    await send({ type: 'deleteWatch', id });
+
+    // Render-in-tab mode spots the sign-in page too.
+    await signedIn(false);
+    const rendered = (await send({ type: 'createWatch', watch: { ...members, mode: 'tab', renderDelaySeconds: 0, onSignIn: 'nothing' } })).id;
+    const r = await waitFor(async () => { const x = await watchOf(rendered); return x.lastError && x; }, 30000);
+    assert.match(r.lastError, /asked you to sign in/);
+    await send({ type: 'deleteWatch', id: rendered });
+  });
+
+  await step('sign-in actions: open a tab once and check again after signing in, or pause', async () => {
+    await signedIn(false);
+    const opened = context.waitForEvent('page');
+    const { id } = await send({ type: 'createWatch', watch: { ...members, sendCookies: true, onSignIn: 'tab' } });
+    const tab = await opened;
+    await waitFor(async () => (await watchOf(id)).signInHandled);
+    await tab.waitForLoadState();
+    assert.match(tab.url(), /\/login\?next=/);
+    const pagesBefore = context.pages().length;
+    await send({ type: 'checkNow', id });
+    assert.equal(context.pages().length, pagesBefore, 'no second tab');
+
+    // Signing in and landing back on the page checks it right away.
+    await signedIn(true);
+    await tab.goto(`${base}/members`);
+    await waitFor(async () => !(await watchOf(id)).signInNeeded);
+    assert.match((await history(id))[0].text, /Members only/);
+    await tab.close();
+    await send({ type: 'deleteWatch', id });
+
+    await signedIn(false);
+    const paused = (await send({ type: 'createWatch', watch: { ...members, sendCookies: true, onSignIn: 'pause' } })).id;
+    await waitFor(async () => (await watchOf(paused)).paused);
+    await page.evaluate((i) => { location.hash = `#/w/${i}`; }, paused);
+    await page.waitForSelector('.banner:has-text("Paused because")');
+    // Once signed in, a check that gets through resumes it.
+    await signedIn(true);
+    await send({ type: 'checkNow', id: paused });
+    assert.equal((await watchOf(paused)).paused, false);
+    await page.evaluate(() => { location.hash = '#/'; });
+    await send({ type: 'deleteWatch', id: paused });
+    await signedIn(false);
   });
 
   await step('popup renders', async () => {

@@ -61,7 +61,8 @@ test('an allow-list of unreadable entries allows nothing', () => {
 });
 
 test('no-cookies policy also rules out render-in-tab', () => {
-  const w = applyPolicy(normalizePolicy({ disableCookies: true }), { mode: 'tab', sendCookies: true, intervalMinutes: 5 });
+  const w = applyPolicy(normalizePolicy({ disableCookies: true }), { mode: 'tab', sendCookies: true, autoCookies: true, intervalMinutes: 5 });
   assert.equal(w.mode, 'fetch');
   assert.equal(w.sendCookies, false);
+  assert.equal(w.autoCookies, false);
 });

@@ -12,7 +12,9 @@ managed Chrome browsers, and how to limit what it can do.
   the last watch on that site is deleted.
 - Pages are downloaded and parsed without running their scripts, unless the user
   turns on "render in tab" for a watch.
-- Cookies are not sent with checks unless the user turns that on for a watch.
+- Cookies are not sent with checks unless the watch has that turned on, either
+  by the user or automatically when a page asks the user to sign in.
+  `disableCookies` turns both off.
 - All data stays in `chrome.storage.local` on the device. Exports are files the
   user saves themselves, and can be password protected (AES-256-GCM with a
   PBKDF2-SHA-256 key, 600,000 iterations).
@@ -40,7 +42,7 @@ set by the organization.
 | --- | --- | --- |
 | `allowedSites` | list of strings | Only these sites can be watched. `example.com` also covers its subdomains. |
 | `blockedSites` | list of strings | These sites can never be watched. Takes priority over `allowedSites`. |
-| `disableCookies` | boolean | Checks never use the user's signed-in session: no cookies are sent, and render-in-tab mode (which loads the page as the user) is off. |
+| `disableCookies` | boolean | Checks never use the user's signed-in session: no cookies are sent, cookies are never turned on automatically for pages that ask for a sign-in, and render-in-tab mode (which loads the page as the user) is off. |
 | `disableRenderInTab` | boolean | Pages are only downloaded and parsed; their scripts never run. |
 | `disableLiveMode` | boolean | The extension never observes open tabs. |
 | `minIntervalMinutes` | integer | Checks run at most this often. Shorter intervals are raised to it. |
