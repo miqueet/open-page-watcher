@@ -14,8 +14,8 @@ jobs:
         with:
           node-version: 22
       - run: npm test
-      - name: Manifest is valid JSON
-        run: node -e "JSON.parse(require('fs').readFileSync('manifest.json'))"
+      - name: Manifest is valid and its files exist
+        run: node scripts/check-package.mjs .
   browser:
     runs-on: ubuntu-latest
     steps:

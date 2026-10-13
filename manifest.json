@@ -1,20 +1,55 @@
 {
   "manifest_version": 3,
   "name": "Open Page Watcher",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Watch web pages for changes. Open source, no servers, no tracking, per-site permissions.",
   "minimum_chrome_version": "116",
-  "permissions": ["storage", "alarms", "notifications", "offscreen", "activeTab", "scripting"],
-  "optional_host_permissions": ["http://*/*", "https://*/*"],
-  "background": { "service_worker": "src/background.js", "type": "module" },
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "alarms",
+    "notifications",
+    "offscreen",
+    "activeTab",
+    "scripting",
+    "contextMenus",
+    "tts"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
   "action": {
     "default_title": "Open Page Watcher",
     "default_popup": "src/ui/popup.html",
-    "default_icon": { "16": "icons/icon16.png", "32": "icons/icon32.png" }
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
+  },
+  "commands": {
+    "watch-part": {
+      "suggested_key": {
+        "default": "Alt+Shift+W"
+      },
+      "description": "Pick parts of this page to watch"
+    }
   },
   "options_page": "src/ui/inbox.html",
-  "icons": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"
+  },
+  "storage": {
+    "managed_schema": "managed_schema.json"
   }
 }
