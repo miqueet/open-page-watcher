@@ -19,7 +19,7 @@
     },
     "disableCookies": {
       "title": "Never use the signed-in session",
-      "description": "Checks never include the user's cookies, and render-in-tab mode (which loads pages as the signed-in user) is turned off, so watches can't act as the user.",
+      "description": "Checks never include the user's cookies (including for pages that ask the user to sign in), and render-in-tab mode (which loads pages as the signed-in user) is turned off, so watches can't act as the user.",
       "type": "boolean"
     },
     "disableRenderInTab": {

@@ -73,7 +73,10 @@ export function applyPolicy(policy, watch) {
   const w = { ...watch, schedule: watch.schedule ? { ...watch.schedule } : watch.schedule };
   // Render-in-tab loads the page as the signed-in user, so "no cookies" rules
   // it out too.
-  if (policy.disableCookies) w.sendCookies = false;
+  if (policy.disableCookies) {
+    w.sendCookies = false;
+    w.autoCookies = false;
+  }
   if (policy.disableRenderInTab || policy.disableCookies) w.mode = 'fetch';
   if (policy.disableLiveMode) w.live = false;
   if (policy.minIntervalMinutes && w.intervalMinutes < policy.minIntervalMinutes) w.intervalMinutes = policy.minIntervalMinutes;

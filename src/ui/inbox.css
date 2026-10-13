@@ -37,6 +37,9 @@ label.field > span { font-weight: 500; }
 .inline { display: flex; gap: 8px; align-items: center; }
 .inline input[type=number] { width: 100px; }
 .inline select { width: auto; }
+.interval-slider { display: grid; gap: 2px; }
+.interval-slider input[type=range] { border: none; padding: 0; background: none; accent-color: var(--accent); }
+.slider-ends { display: flex; justify-content: space-between; }
 .check { display: flex; gap: 8px; align-items: flex-start; }
 .check input { width: auto; margin-top: 3px; }
 fieldset { border: 1px solid var(--border); border-radius: 8px; display: grid; gap: 10px; padding: 12px; }
@@ -97,3 +100,4 @@ kbd { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; border: 1px sol
 .inline input[type=time] { width: auto; }
 table.shortcuts { width: auto; justify-self: start; }
 table.shortcuts td:first-child { padding-right: 24px; }
+.banner + .banner { margin-top: 8px; }

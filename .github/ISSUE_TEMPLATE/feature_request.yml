@@ -1,0 +1,28 @@
+name: Feature request
+description: Suggest something Open Page Watcher should do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea! Please check the [open requests](https://github.com/miqueet/open-page-watcher/issues?q=is%3Aissue+is%3Aopen+label%3Aenhancement) first, and give a 👍 to one that already covers it.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like to do?
+      description: The page you want to watch or the task you're trying to get done. Leave out private addresses.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How could it work?
+      description: Your idea for the feature, if you have one.
+  - type: checkboxes
+    id: local
+    attributes:
+      label: Private and local
+      description: Open Page Watcher keeps everything on your computer. Features that need a server, an account or sending data elsewhere are out of scope.
+      options:
+        - label: This idea works without sending my data anywhere
+          required: true

@@ -12,7 +12,7 @@ code was copied, decompiled or consulted.
 | Visual selector to watch parts of a page | Yes, click-to-select picker (multiple elements), with click-inside to exclude parts |
 | CSS / XPath selection, exclusions | Yes, editable per watch, plus attributes (`a @href`) |
 | Regex to extract matches | Yes, optional "keep only text matching" regex |
-| Check schedule | Every 1 minute to every 7 days, or random within a range, optionally only during set hours and days |
+| Check schedule | Every 1 minute to every 7 days (slider or exact value), or random within a range, optionally only during set hours and days |
 | Pages that need JavaScript to render | "Render in tab" mode opens the page in a hidden window, waits, extracts, closes it; can include frames |
 | Live monitoring of an open tab | Yes, opt-in live mode re-reads the tab when its content changes |
 | Conditions before alerting | Rule lists with all/any: text, regex, length, empty, never seen, number thresholds and changes by amount or percent, on new / added / removed / previous text |
@@ -28,6 +28,9 @@ code was copied, decompiled or consulted.
 Additions that Distill doesn't have as local features:
 
 - Quiet hours, and combining alerts into one summary notification
+- Spotting pages that ask you to sign in, turning on cookies for the watch once
+  that gets past the sign-in page, and a choice of what to do (notify, open a
+  tab to sign in, pause, or nothing)
 - A chart of the first number on the page over time
 - Opening the page with what changed highlighted (CSS Custom Highlight API)
 - Organization policy through Chrome managed storage ([enterprise.md](enterprise.md))
@@ -74,11 +77,19 @@ These run on the device but were left out as security trade-offs:
    been stripped of scripts, event handlers, forms, frames, media, styles and
    every attribute except a short safe list, inside an `<iframe sandbox="">`
    (no scripts, no same-origin access) with a CSP that blocks all network loads.
-7. **Cookies off by default.** Each watch has an explicit "send my cookies"
-   switch for pages behind a login. When it is off, requests use
-   `credentials: "omit"`. Render-in-tab mode always loads the page as the
+7. **Cookies only where needed, and only to the watched site.** Each watch has
+   a "send my cookies" switch for pages behind a sign-in. It starts off, and
+   while it is off requests use `credentials: "omit"`. When a check without
+   cookies lands on a sign-in page (an HTTP 401, a redirect to a sign-in
+   address, or a password or username field where the watched content should
+   be), it is tried once more with cookies, and the switch is turned on only if
+   that gets past the sign-in page. That is logged, shown on the watch, and can
+   be turned off per watch. Cookies only go to the watched page's own site.
+   Sign-in pages are never saved as versions; instead the watch does what the
+   user chose (notify, open the page in a tab, pause, or nothing), once until a
+   check gets through again. Render-in-tab mode always loads the page as the
    signed-in user, so the organization setting that forces cookies off also
-   turns render-in-tab off.
+   turns render-in-tab and the automatic switch off.
 8. **Bounded work.** Requests time out after 30 seconds, pages over 5 MB and
    PDFs over 20 MB are rejected, watched text over 2 million characters is
    refused, snapshots are capped at 300 KB, history and logs are capped per
@@ -132,6 +143,7 @@ These run on the device but were left out as security trade-offs:
 - `src/lib/conditions.js`: alert rules.
 - `src/lib/alerts.js`: change summaries, quiet hours and combined alerts.
 - `src/lib/policy.js`: organization policy.
+- `src/lib/signin.js`: spotting sign-in pages.
 - `src/lib/backup.js`: password-protected backups.
 - `src/lib/highlight.js`: highlights changes on an opened page.
 - `src/picker.js`: injected on demand via `activeTab` to select elements.

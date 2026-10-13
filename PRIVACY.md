@@ -30,8 +30,12 @@ accounts, analytics, telemetry, advertising or crash reporting.
 
 The only network requests the extension makes are to the pages you asked it to
 watch, in the same way your browser would load them. Your cookies are not
-included in those requests unless you turn on "Send my cookies for this site"
-for a specific watch.
+included in those requests unless "Send my cookies for this site" is on for that
+watch. It is off when you add a watch. If a check finds that the page needs you
+to be signed in, the extension tries once more with your cookies for that site,
+and turns the setting on for that watch only if that gets past the sign-in page.
+You can turn this off for any watch. Cookies are only ever sent to the watched
+site itself.
 
 ## Permissions
 
