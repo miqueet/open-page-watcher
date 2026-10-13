@@ -42,3 +42,26 @@ test('site entries may include a scheme, wildcard and port', () => {
   assert.deepEqual(p.allowedSites, ['corp.example']);
   checkSiteAllowed(p, 'https://wiki.corp.example:8443/page');
 });
+
+test('blocked sites match trailing dots, Unicode names and odd entry forms', () => {
+  const p = normalizePolicy({ blockedSites: ['bücher.de', '.corp.example', 'user@intranet.example', '*.evil.example.'] });
+  assert.deepEqual(p.blockedSites, ['xn--bcher-kva.de', 'corp.example', 'intranet.example', 'evil.example']);
+  for (const url of ['https://xn--bcher-kva.de/', 'https://bücher.de/', 'https://wiki.corp.example./',
+    'https://intranet.example/', 'https://a.evil.example/']) {
+    assert.throws(() => checkSiteAllowed(p, url), /doesn't allow/, url);
+  }
+  checkSiteAllowed(p, 'https://example.org/');
+  assert.throws(() => checkSiteAllowed(normalizePolicy({ blockedSites: ['*'] }), 'https://example.org/'));
+});
+
+test('an allow-list of unreadable entries allows nothing', () => {
+  const p = normalizePolicy({ allowedSites: ['not a host', 42, ''] });
+  assert.deepEqual(p.allowedSites, []);
+  assert.throws(() => checkSiteAllowed(p, 'https://example.org/'));
+});
+
+test('no-cookies policy also rules out render-in-tab', () => {
+  const w = applyPolicy(normalizePolicy({ disableCookies: true }), { mode: 'tab', sendCookies: true, intervalMinutes: 5 });
+  assert.equal(w.mode, 'fetch');
+  assert.equal(w.sendCookies, false);
+});

@@ -9,6 +9,8 @@
 //   excludes: [{ type, expr }],                            // skipped inside selections
 //   baseUrl: string,                                       // resolves relative href/src
 //   captureHtml: boolean,                                  // also return the selected HTML
+//   userTab: boolean,          // the user's own tab (live mode): skip anything they may have typed
+//   expect: { url } | { origin },  // the main frame must still show this page or site
 // }
 // Returns { ok: true, text, matched, html? } or { ok: false, error }.
 export function extractText(spec, doc = document) {
@@ -35,16 +37,23 @@ export function extractText(spec, doc = document) {
 
   // Form fields can hold what the user typed into an open tab (live mode), so
   // only their page-supplied attributes are read, and password fields never.
+  // In the user's own tab, form fields and editable areas may hold what they
+  // typed (pages can copy it into the value attribute), so none are read.
   const FORM_FIELDS = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
+  const userTab = Boolean(spec && spec.userTab);
   const tagOf = (node) => String(node.tagName || '').toUpperCase();
-  const isSecret = (node) => tagOf(node) === 'INPUT' && /^(password|hidden|file)$/i.test(node.getAttribute('type') || '');
+  const isSecret = (node) => (userTab && (FORM_FIELDS.has(tagOf(node)) || node.isContentEditable === true))
+    || (tagOf(node) === 'INPUT' && /^(password|hidden|file)$/i.test(node.getAttribute('type') || ''));
+  // Properties a watch may read when the attribute is missing. Anything else
+  // (document.cookie, a field's typed value) stays out of reach.
+  const PROPS = new Set(['currentSrc', 'href', 'src', 'title', 'alt', 'naturalWidth', 'naturalHeight', 'duration']);
 
   function attrOf(node, name) {
-    if (node.nodeType === 1 && isSecret(node)) return '';
-    let value = node.getAttribute ? node.getAttribute(name) : null;
-    if (value === null && name in node && !FORM_FIELDS.has(tagOf(node))
+    if (node.nodeType !== 1 || isSecret(node)) return '';
+    let value = node.getAttribute(name);
+    if (value === null && PROPS.has(name) && !FORM_FIELDS.has(tagOf(node)) && name in node
       && typeof node[name] !== 'object' && typeof node[name] !== 'function') {
-      value = String(node[name]); // a live property such as an image's currentSrc
+      value = String(node[name]); // e.g. the image actually shown, from srcset
     }
     if (value === null) return '';
     if (URL_ATTRS.has(name.toLowerCase()) && spec && spec.baseUrl) {
@@ -109,8 +118,9 @@ export function extractText(spec, doc = document) {
       if (node.nodeType !== 1 && node.nodeType !== 9 && node.nodeType !== 11) return;
       const tag = node.nodeType === 1 ? node.tagName.toUpperCase() : '';
       if (SKIP.has(tag)) return;
+      if (node.nodeType === 1 && isSecret(node)) return;
       if (tag === 'INPUT') {
-        if (!isSecret(node)) out.push(' ' + (node.getAttribute('value') ?? '') + ' ');
+        out.push(' ' + (node.getAttribute('value') ?? '') + ' ');
         return;
       }
       if (tag === 'TEXTAREA') {
@@ -133,6 +143,13 @@ export function extractText(spec, doc = document) {
   }
 
   try {
+    const expect = spec && spec.expect;
+    if (expect && doc.location && typeof window !== 'undefined' && window.top === window) {
+      const here = String(doc.location.href).split('#')[0];
+      if ((expect.url && here !== String(expect.url).split('#')[0]) || (expect.origin && doc.location.origin !== expect.origin)) {
+        return { ok: false, error: 'The tab no longer shows this page' };
+      }
+    }
     const selectors = (spec && spec.selectors) || [];
     excluded = new Set(((spec && spec.excludes) || []).flatMap(find));
     const html = spec && spec.captureHtml ? newHtmlBuffer() : null;

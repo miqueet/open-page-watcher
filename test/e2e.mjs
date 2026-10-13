@@ -81,12 +81,30 @@ const server = http.createServer((req, res) => {
   if (req.url === '/live') {
     res.setHeader('content-type', 'text/html');
     return res.end(`<!doctype html><title>Live</title><p id="n">0</p>
-      <input id="q" value="default"><input id="pw" type="password" value="server-secret">`);
+      <input id="q" value="default"><input id="pw" type="password" value="server-secret">
+      <div id="draft" contenteditable>draft</div>`);
   }
   if (req.url === '/doc.pdf' || req.url === '/download?id=7') {
     // The second address serves the PDF with a generic type, like many download links.
     res.setHeader('content-type', req.url === '/doc.pdf' ? 'application/pdf' : 'application/octet-stream');
     return res.end(fs.readFileSync(path.join(root, 'test/fixtures/standard.pdf')));
+  }
+  if (req.url === '/redirect-in') {
+    res.writeHead(302, { location: '/product' });
+    return res.end();
+  }
+  if (req.url === '/redirect-out') {
+    res.writeHead(302, { location: `http://localhost:${server.address().port}/public` });
+    return res.end();
+  }
+  if (req.url === '/public') {
+    res.setHeader('access-control-allow-origin', '*');
+    res.setHeader('content-type', 'text/plain');
+    return res.end('another site');
+  }
+  if (req.url === '/nested.json') {
+    res.setHeader('content-type', 'application/json');
+    return res.end(`${'['.repeat(3000)}${'1,'.repeat(5000)}1${']'.repeat(3000)}`);
   }
   if (req.url === '/tracker.png') trackerHits++;
   res.statusCode = 404;
@@ -222,6 +240,24 @@ try {
     assert.equal(h.text, '8');
   });
 
+  await step('redirects must stay on sites the watch can access', async () => {
+    const inside = await send({ type: 'createWatch', watch: { url: `${base}/redirect-in`, selectors: [{ type: 'css', expr: 'h1' }] } });
+    const h = await waitFor(async () => (await history(inside.id))[0]);
+    assert.equal(h.text, 'Widget');
+    const outside = await send({ type: 'createWatch', watch: { url: `${base}/redirect-out` } });
+    const w = await waitFor(async () => { const x = await watchOf(outside.id); return x.lastError && x; });
+    assert.match(w.lastError, /redirected to localhost/);
+    assert.equal((await history(outside.id)).length, 0);
+    await send({ type: 'bulk', ids: [inside.id, outside.id], action: 'delete' });
+  });
+
+  await step('deeply nested JSON is kept as sent instead of blowing up', async () => {
+    const res = await send({ type: 'createWatch', watch: { url: `${base}/nested.json` } });
+    const h = await waitFor(async () => (await history(res.id))[0]);
+    assert.ok(h.text.length < 100_000, `stored ${h.text.length} characters`);
+    await send({ type: 'deleteWatch', id: res.id });
+  });
+
   await step('JSON responses are pretty-printed', async () => {
     const res = await send({ type: 'createWatch', watch: { url: `${base}/data.json` } });
     const h = await waitFor(async () => (await history(res.id))[0]);
@@ -264,10 +300,20 @@ try {
       const [t] = await chrome.tabs.query({ url });
       await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ['src/picker.js'] });
     }, `${base}/product`);
+    const before = Object.keys((await page.evaluate(() => chrome.storage.local.get('watches'))).watches).length;
+    // The page itself can't pick or save: its synthetic events are ignored.
+    await tab.evaluate(() => {
+      document.querySelector('h1').click();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    await tab.waitForTimeout(500);
+    assert.equal(Object.keys((await page.evaluate(() => chrome.storage.local.get('watches'))).watches).length, before);
+
     await tab.click('p.stock');
     await tab.screenshot({ path: process.env.SHOT || path.join(os.tmpdir(), 'opw-picker.png') });
+    // A page changing its address doesn't change what gets watched.
+    await tab.evaluate(() => history.pushState(null, '', '/somewhere-else'));
     // The toolbar is in a closed shadow root, so save with the keyboard.
-    const before = Object.keys((await page.evaluate(() => chrome.storage.local.get('watches'))).watches).length;
     await tab.keyboard.press('Enter');
     const saved = await waitFor(async () => {
       const n = Object.keys((await page.evaluate(() => chrome.storage.local.get('watches'))).watches).length;
@@ -278,6 +324,7 @@ try {
     const w = all.find((x) => x.selectors[0]?.expr === 'p.stock' || x.selectors[0]?.expr.includes('nth-of-type(2)'));
     assert.ok(w, `unexpected selectors: ${JSON.stringify(all.map((x) => x.selectors))}`);
     assert.equal(w.name, 'scripts ran'); // the live tab's title, after its scripts ran
+    assert.equal(w.url, `${base}/product`);
     await tab.close();
   });
 
@@ -553,6 +600,7 @@ try {
       self.spoken = [];
       chrome.tts.getVoices = async () => [
         { voiceName: 'Online voice', lang: 'en-US', remote: true },
+        { voiceName: 'Another extension', lang: 'en-US', remote: false, extensionId: 'abc' },
         { voiceName: 'Local voice', lang: 'en-US', remote: false },
       ];
       chrome.tts.speak = (text, options) => self.spoken.push(`${options.voiceName}: ${text}`);
@@ -605,12 +653,27 @@ try {
     await waitFor(async () => (await history(whole.id))[0]);
     await tab.fill('#q', 'typed by me');
     await tab.fill('#pw', 'hunter2');
-    await tab.evaluate(() => { document.getElementById('n').textContent = '43'; });
+    await tab.fill('#draft', 'my private email draft');
+    await tab.evaluate(() => {
+      // Some pages copy what you type into the value attribute.
+      const q = document.getElementById('q');
+      q.setAttribute('value', q.value);
+      document.cookie = 'session=s3cr3t';
+      document.getElementById('n').textContent = '43';
+    });
     const w = await waitFor(async () => { const x = await history(whole.id); return x.length >= 2 && x; }, 20000);
     const last = w[w.length - 1];
     assert.match(last.text, /43/);
-    assert.match(last.text, /default/);
-    assert.ok(!/typed by me|hunter2|server-secret/.test(last.text + (last.html || '')), 'typed values and passwords are not recorded');
+    assert.ok(!/typed by me|hunter2|server-secret|private email/.test(last.text + (last.html || '')),
+      'typed values, drafts and passwords are not recorded');
+
+    // Watches can only read element attributes and a few safe properties.
+    const cookieWatch = await send({ type: 'createWatch', watch: { url: `${base}/live`, live: true, selectors: [{ type: 'xpath', expr: '/', attr: 'cookie' }] } });
+    await waitFor(async () => (await history(cookieWatch.id))[0] || (await watchOf(cookieWatch.id)).lastError);
+    await tab.evaluate(() => { document.getElementById('n').textContent = '44'; });
+    await tab.waitForTimeout(3000);
+    const seen = (await history(cookieWatch.id)).map((x) => x.text).join(' ');
+    assert.ok(!seen.includes('s3cr3t'), 'document.cookie is not readable');
     const log = await page.evaluate(async (k) => (await chrome.storage.local.get(k))[k], `log:${res.id}`);
     assert.ok(log.some((e) => e.via === 'live'));
     await tab.close();

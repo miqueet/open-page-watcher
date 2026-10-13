@@ -11,16 +11,28 @@ export async function getPolicy() {
   }
 }
 
+// Turns a site entry into a host name the way the browser writes it
+// (lowercase, punycode, no trailing dot). Accepts "example.com",
+// "*.example.com", ".example.com", "https://example.com:8443/path" and "*".
+// Returns null for entries that aren't a host.
+export function siteHost(entry) {
+  if (typeof entry !== 'string') return null;
+  let e = entry.trim().toLowerCase();
+  if (e === '*') return '*';
+  e = e.replace(/^[a-z][a-z0-9+.-]*:\/\//, '').replace(/^\*?\./, '');
+  if (!e || /[\s*]/.test(e)) return null;
+  try {
+    return new URL(`http://${e}`).hostname.replace(/\.+$/, '') || null;
+  } catch {
+    return null;
+  }
+}
+
+// An entry that can't be read never matches anything, so a broken allow-list
+// allows nothing rather than everything.
 function hostList(list) {
   if (!Array.isArray(list)) return null;
-  return list
-    .filter((h) => typeof h === 'string' && h.trim())
-    .slice(0, 1000)
-    .map((h) => h.trim().toLowerCase()
-      .replace(/^https?:\/\//, '')
-      .replace(/\/.*$/, '')
-      .replace(/:\d+$/, '')
-      .replace(/^\*\./, ''));
+  return list.slice(0, 1000).map(siteHost).filter(Boolean);
 }
 
 export function normalizePolicy(raw = {}) {
@@ -42,12 +54,12 @@ export function isManaged(policy) {
 }
 
 function covers(entry, host) {
-  return host === entry || host.endsWith(`.${entry}`);
+  return entry === '*' || host === entry || host.endsWith(`.${entry}`);
 }
 
 // Throws if the organization doesn't allow watching this URL.
 export function checkSiteAllowed(policy, url) {
-  const host = new URL(url).hostname.toLowerCase();
+  const host = new URL(url).hostname.toLowerCase().replace(/\.+$/, '');
   if (policy.blockedSites.some((e) => covers(e, host))) {
     throw new Error(`Your organization doesn't allow watching ${host}`);
   }
@@ -59,8 +71,10 @@ export function checkSiteAllowed(policy, url) {
 // Returns the watch with any policy limits applied.
 export function applyPolicy(policy, watch) {
   const w = { ...watch, schedule: watch.schedule ? { ...watch.schedule } : watch.schedule };
+  // Render-in-tab loads the page as the signed-in user, so "no cookies" rules
+  // it out too.
   if (policy.disableCookies) w.sendCookies = false;
-  if (policy.disableRenderInTab) w.mode = 'fetch';
+  if (policy.disableRenderInTab || policy.disableCookies) w.mode = 'fetch';
   if (policy.disableLiveMode) w.live = false;
   if (policy.minIntervalMinutes && w.intervalMinutes < policy.minIntervalMinutes) w.intervalMinutes = policy.minIntervalMinutes;
   if (w.schedule && policy.minIntervalMinutes && w.schedule.randomMaxMinutes < w.intervalMinutes) {

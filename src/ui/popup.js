@@ -1,5 +1,6 @@
 import { call, getWatches, requestAccess, timeAgo, el } from './api.js';
 import { isHttpUrl } from '../lib/watch.js';
+import { getPolicy, checkSiteAllowed } from '../lib/policy.js';
 
 const inboxUrl = (hash = '') => chrome.runtime.getURL(`src/ui/inbox.html${hash}`);
 const $ = (id) => document.getElementById(id);
@@ -49,6 +50,7 @@ async function init() {
 
   $('pick-parts').addEventListener('click', async () => {
     try {
+      checkSiteAllowed(await getPolicy(), url);
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['src/picker.js'] });
       await requestAccess([url]);
       window.close();

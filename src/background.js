@@ -19,6 +19,8 @@ const FETCH_TIMEOUT_MS = 30_000;
 const RENDER_TIMEOUT_MS = 45_000;
 const MAX_BYTES = 5 * 1024 * 1024;
 const MAX_PDF_BYTES = 20 * 1024 * 1024;
+const MAX_TEXT_CHARS = 2_000_000; // per version, after extraction
+const MAX_HTML_CHARS = 300 * 1024; // snapshot kept for the visual view
 const MAX_CONCURRENT = 3;
 const LIVE_MIN_GAP_MS = 10_000;
 const OFFSCREEN_URL = 'src/offscreen.html';
@@ -37,6 +39,7 @@ chrome.runtime.onStartup.addListener(setup);
 async function setup() {
   await chrome.alarms.create(TICK_ALARM, { periodInMinutes: 1, delayInMinutes: 0.1 });
   await setupMenus();
+  await releaseUnusedAccess();
   await updateBadge();
 }
 
@@ -48,8 +51,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 async function runDueChecks() {
   const now = Date.now();
+  const policy = await getPolicy();
   const due = Object.values(await getWatches())
-    .filter((w) => isDue(w, now) && !inFlight.has(w.id))
+    .filter((w) => isDue(applyPolicy(policy, w), now) && !inFlight.has(w.id))
     .sort((a, b) => a.lastCheckedAt - b.lastCheckedAt);
   const workers = Array.from({ length: Math.min(MAX_CONCURRENT, due.length) }, async () => {
     while (due.length) await checkWatch(due.shift().id);
@@ -92,10 +96,8 @@ async function askAccess(url) {
 }
 
 async function quickWatch(url, name) {
-  const watch = await enforcePolicy(sanitizeWatch({ url, name: name || '' }), { adding: 1 });
-  await updateWatches((all) => {
-    all[watch.id] = watch;
-  });
+  const watch = await enforcePolicy(sanitizeWatch({ url, name: name || '' }));
+  await addWatches([watch]);
   await askAccess(watch.url);
   checkWatch(watch.id);
   await openInbox(watch.id);
@@ -140,9 +142,13 @@ async function checkWatch(id, { via = 'schedule', tabId } = {}) {
       checkSiteAllowed(policy, watch.url);
       const granted = await chrome.permissions.contains({ origins: [originPattern(watch.url)] });
       if (!granted) throw new Error('Access to this site has not been granted. Open the watch and click Allow.');
-      if (via === 'live') result = await extractInTab(tabId, watch);
+      if (via === 'live') result = await extractInTab(tabId, watch, { userTab: true });
       else if (watch.mode === 'tab') result = await renderAndExtract(watch);
-      else result = await fetchAndExtract(watch);
+      else result = await fetchAndExtract(watch, policy);
+      if (result.text.length > MAX_TEXT_CHARS) {
+        throw new Error('The watched text is over 2 million characters. Select part of the page instead.');
+      }
+      if (result.html && result.html.length > MAX_HTML_CHARS) delete result.html;
       result.text = postProcess(result.text, watch);
     } catch (e) {
       error = e?.message || String(e);
@@ -163,7 +169,7 @@ async function record(watch, result, error, { via, started }) {
       const w = all[id];
       if (!w) return null;
       w.lastCheckedAt = now;
-      if (via !== 'live') w.nextCheckAt = nextCheckTime(w, now);
+      if (via !== 'live') w.nextCheckAt = nextCheckTime(watch, now);
       w.lastError = error;
       w.errorCount = (w.errorCount || 0) + 1;
       return { ...w };
@@ -203,7 +209,7 @@ async function record(watch, result, error, { via, started }) {
     const w = all[id];
     if (!w) return;
     w.lastCheckedAt = now;
-    if (via !== 'live') w.nextCheckAt = nextCheckTime(w, now);
+    if (via !== 'live') w.nextCheckAt = nextCheckTime(watch, now);
     w.lastError = '';
     w.errorCount = 0;
     if (previous && changed) {
@@ -218,7 +224,7 @@ async function record(watch, result, error, { via, started }) {
   await broadcast({ type: 'changed', id });
 }
 
-async function fetchAndExtract(watch) {
+async function fetchAndExtract(watch, policy) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   let response;
@@ -231,6 +237,7 @@ async function fetchAndExtract(watch) {
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`The site answered with HTTP ${response.status}`);
+    if (response.redirected) await checkRedirect(watch, response.url, policy);
     const isPdf = /application\/pdf/i.test(response.headers.get('content-type') || '');
     bytes = await readLimited(response, isPdf ? MAX_PDF_BYTES : MAX_BYTES);
   } catch (e) {
@@ -255,7 +262,9 @@ async function fetchAndExtract(watch) {
 
   if (/json/i.test(contentType)) {
     try {
-      return { text: JSON.stringify(JSON.parse(body), null, 2), kind: 'json' };
+      // Pretty-printing can blow up deeply nested input; keep the raw body then.
+      const pretty = JSON.stringify(JSON.parse(body), null, 2);
+      return { text: pretty.length > MAX_TEXT_CHARS ? body : pretty, kind: 'json' };
     } catch {
       return { text: body, kind: 'text' };
     }
@@ -274,12 +283,26 @@ async function fetchAndExtract(watch) {
   return result;
 }
 
+// A redirect must land on a site the organization allows, and on the same
+// host or one the user has given access to.
+async function checkRedirect(watch, finalUrl, policy) {
+  const to = new URL(finalUrl);
+  checkSiteAllowed(policy, finalUrl);
+  if (to.hostname === new URL(watch.url).hostname) return;
+  if (!(await chrome.permissions.contains({ origins: [originPattern(finalUrl)] }))) {
+    throw new Error(`The page redirected to ${to.host}, which this watch doesn't have access to`);
+  }
+}
+
 function startsWithPdfMagic(bytes) {
   return bytes.length > 4 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46;
 }
 
-function extractSpec(watch, baseUrl) {
-  return { selectors: watch.selectors, excludes: watch.excludes, baseUrl, captureHtml: true };
+// userTab: the page is open in the user's own tab (live mode), so nothing
+// the user may have typed is read. expect: the main frame must still show
+// this page ({ url }) or site ({ origin }) when the extractor runs.
+function extractSpec(watch, baseUrl, { userTab = false, expect = null } = {}) {
+  return { selectors: watch.selectors, excludes: watch.excludes, baseUrl, captureHtml: true, userTab, expect };
 }
 
 async function readLimited(response, limit) {
@@ -318,7 +341,7 @@ async function renderAndExtract(watch) {
     if (!tab.url || new URL(tab.url).origin !== new URL(watch.url).origin) {
       throw new Error('The page redirected to a different site');
     }
-    return await extractInTab(tabId, watch);
+    return await extractInTab(tabId, watch, { expect: { origin: new URL(watch.url).origin } });
   } finally {
     renderTabs.delete(tabId);
     chrome.windows.remove(win.id).catch(() => {});
@@ -327,12 +350,17 @@ async function renderAndExtract(watch) {
 
 // Runs the extractor in a tab (and, if the watch asks for it, in the tab's
 // frames that the extension has access to).
-async function extractInTab(tabId, watch) {
+async function extractInTab(tabId, watch, { userTab = false, expect = null } = {}) {
   const tab = await chrome.tabs.get(tabId);
+  if (userTab) {
+    // The tab may have moved on since it reported a change.
+    if (tab.incognito || !sameDocument(tab.url || '', watch.url)) throw new Error('The tab no longer shows this page');
+    expect = { url: watch.url };
+  }
   const injections = await chrome.scripting.executeScript({
-    target: watch.includeFrames ? { tabId, allFrames: true } : { tabId },
+    target: watch.includeFrames && !userTab ? { tabId, allFrames: true } : { tabId },
     func: extractText,
-    args: [extractSpec(watch, tab.url)],
+    args: [extractSpec(watch, tab.url, { userTab, expect })],
   });
   const main = injections.find((i) => i.frameId === 0)?.result;
   const found = injections
@@ -340,9 +368,10 @@ async function extractInTab(tabId, watch) {
     .map((i) => i.result)
     .filter((r) => r?.ok);
   if (!found.length) throw new Error(main?.error || 'Could not read the page');
+  const html = found.map((r) => r.html || '').join('');
   return {
     text: found.map((r) => r.text).filter(Boolean).join('\n'),
-    html: found.map((r) => r.html || '').join(''),
+    html: html.length <= MAX_HTML_CHARS ? html : '',
   };
 }
 
@@ -397,7 +426,7 @@ function liveCheck(id, tabId) {
 }
 
 chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
-  if (info.status !== 'complete' || !tab.url?.startsWith('http') || renderTabs.has(tabId)) return;
+  if (info.status !== 'complete' || !tab.url?.startsWith('http') || tab.incognito || renderTabs.has(tabId)) return;
   const live = Object.values(await getWatches()).filter((w) => w.live && !w.paused && sameDocument(w.url, tab.url));
   if (!live.length || (await getPolicy()).disableLiveMode) return;
   if (!(await chrome.permissions.contains({ origins: [originPattern(tab.url)] }))) return;
@@ -406,6 +435,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
 });
 
 async function onLiveChanged(tab) {
+  if (tab.incognito) return {};
   const live = Object.values(await getWatches()).filter((w) => w.live && !w.paused && sameDocument(w.url, tab.url));
   for (const w of live) liveCheck(w.id, tab.id);
   return {};
@@ -511,7 +541,9 @@ async function notify(alerts, now) {
 async function speakLocally(text) {
   const voices = await chrome.tts.getVoices();
   const lang = navigator.language || 'en-US';
-  const local = voices.filter((v) => v.remote === false && v.voiceName);
+  // Voices from other extensions report `remote` however they like, and would
+  // receive the text, so only Chrome's own on-device voices qualify.
+  const local = voices.filter((v) => v.remote === false && !v.extensionId && v.voiceName);
   const voice = local.find((v) => v.lang === lang)
     || local.find((v) => v.lang?.split('-')[0] === lang.split('-')[0])
     || local[0];
@@ -619,10 +651,22 @@ function broadcast(message) {
 // Permissions housekeeping
 
 // Releases site access that no remaining watch needs.
+// Removes every optional site permission no watch (or open picker) uses, e.g.
+// access granted for a watch that then couldn't be saved.
+async function releaseUnusedAccess() {
+  const { origins = [] } = await chrome.permissions.getAll();
+  const used = new Set(Object.values(await getWatches()).map((w) => originPattern(w.url)));
+  for (const s of Object.values(await pickerSessions())) used.add(originPattern(s.url));
+  for (const origin of origins) {
+    if (!used.has(origin) && /^https?:\/\//.test(origin)) {
+      await chrome.permissions.remove({ origins: [origin] }).catch(() => {}); // required ones can't be removed
+    }
+  }
+}
+
 async function releaseUnusedOrigins(removedUrls) {
-  const watches = Object.values(await getWatches());
-  const patterns = [...new Set(removedUrls.map(originPattern))]
-    .filter((p) => !watches.some((w) => originPattern(w.url) === p));
+  const used = [...Object.values(await getWatches()), ...Object.values(await pickerSessions())].map((w) => originPattern(w.url));
+  const patterns = [...new Set(removedUrls.map(originPattern))].filter((p) => !used.includes(p));
   if (patterns.length) await chrome.permissions.remove({ origins: patterns }).catch(() => {});
 }
 
@@ -631,16 +675,22 @@ async function releaseUnusedOrigins(removedUrls) {
 
 // Applies organization policy to a watch being saved. Throws if the site isn't
 // allowed or a new watch would exceed the limit.
-async function enforcePolicy(watch, { adding = 0 } = {}) {
+async function enforcePolicy(watch) {
   const policy = await getPolicy();
   checkSiteAllowed(policy, watch.url);
-  if (adding && policy.maxWatches) {
-    const count = Object.keys(await getWatches()).length;
-    if (count + adding > policy.maxWatches) {
-      throw new Error(`Your organization allows at most ${policy.maxWatches} watches`);
-    }
-  }
   return applyPolicy(policy, watch);
+}
+
+// Stores new watches, checking the organization's limit inside the same write
+// so that saves running at the same time can't both squeeze in.
+async function addWatches(list) {
+  const { maxWatches } = await getPolicy();
+  await updateWatches((all) => {
+    if (maxWatches && Object.keys(all).length + list.length > maxWatches) {
+      throw new Error(`Your organization allows at most ${maxWatches} watches`);
+    }
+    for (const w of list) all[w.id] = w;
+  });
 }
 
 // Changing any of these makes earlier versions incomparable with new ones.
@@ -648,10 +698,8 @@ const CONTENT_FIELDS = ['url', 'selectors', 'excludes', 'regexFilter', 'mode', '
 
 const uiHandlers = {
   async createWatch({ watch }) {
-    const clean = await enforcePolicy(sanitizeWatch(watch), { adding: 1 });
-    await updateWatches((all) => {
-      all[clean.id] = clean;
-    });
+    const clean = await enforcePolicy(sanitizeWatch(watch));
+    await addWatches([clean]);
     checkWatch(clean.id);
     return { id: clean.id };
   },
@@ -684,10 +732,8 @@ const uiHandlers = {
     if (!source) throw new Error('Watch not found');
     const copy = await enforcePolicy(sanitizeWatch({
       ...exportableWatch(source), id: undefined, name: `${source.name} (copy)`.slice(0, 200),
-    }), { adding: 1 });
-    await updateWatches((all) => {
-      all[copy.id] = copy;
-    });
+    }));
+    await addWatches([copy]);
     checkWatch(copy.id);
     return { id: copy.id };
   },
@@ -698,6 +744,11 @@ const uiHandlers = {
 
   async openPage({ id }) {
     return { highlighted: await openPage(id) };
+  },
+
+  async releaseUnusedAccess() {
+    await releaseUnusedAccess();
+    return {};
   },
 
   async checkNow({ id }) {
@@ -727,8 +778,8 @@ const uiHandlers = {
     const removed = [];
     await updateWatches((all) => {
       for (const id of idSet) {
+        if (!Object.hasOwn(all, id)) continue;
         const w = all[id];
-        if (!w) continue;
         switch (action) {
           case 'pause': w.paused = true; break;
           case 'resume': w.paused = false; break;
@@ -778,13 +829,16 @@ const uiHandlers = {
     const skipped = [];
     for (const raw of data.watches.slice(0, 1000)) {
       try {
-        const w = await enforcePolicy(sanitizeWatch({ ...raw, id: existing[raw?.id] ? undefined : raw?.id }), { adding: imported.length + 1 });
-        imported.push(w);
+        const taken = typeof raw?.id === 'string' && Object.hasOwn(existing, raw.id);
+        imported.push(await enforcePolicy(sanitizeWatch({ ...raw, id: taken ? undefined : raw?.id })));
       } catch (e) {
         skipped.push(`${raw?.name || raw?.url || 'unknown'}: ${e.message}`);
       }
     }
+    const { maxWatches } = await getPolicy();
     await updateWatches((all) => {
+      const room = maxWatches ? Math.max(0, maxWatches - Object.keys(all).length) : Infinity;
+      for (const w of imported.splice(room)) skipped.push(`${w.name}: Your organization allows at most ${maxWatches} watches`);
       for (const w of imported) all[w.id] = w;
     });
     if (includeSettings === true && data.settings && typeof data.settings === 'object') {
@@ -801,8 +855,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.target === 'offscreen' || message.target === 'ui') return false;
 
   let handler;
-  if (message.type === 'picker:save' && sender.tab) {
-    handler = () => savePickerWatch(message, sender.tab);
+  if (message.type === 'picker:start' && sender.tab?.url?.startsWith('http')) {
+    handler = () => startPickerSession(sender.tab, sender.documentId);
+  } else if (message.type === 'picker:cancel' && sender.tab) {
+    handler = () => cancelPicker(sender.tab);
+  } else if (message.type === 'picker:save' && sender.tab) {
+    handler = () => savePickerWatch(message, sender);
   } else if (message.type === 'live:changed' && sender.tab?.url) {
     handler = () => onLiveChanged(sender.tab);
   } else if (sender.url?.startsWith(EXTENSION_ORIGIN) && !sender.tab?.url?.startsWith('http')
@@ -819,25 +877,62 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+// Picker sessions, kept in session storage so they survive the service worker
+// restarting while the user picks. A save is accepted only from the document
+// the picker was started in, and uses the address it had at that moment: the
+// page can change its own URL with pushState, but not this.
+async function pickerSessions() {
+  return (await chrome.storage.session.get('pickerSessions')).pickerSessions || {};
+}
+
+async function startPickerSession(tab, documentId) {
+  await serialize(async () => {
+    const sessions = await pickerSessions();
+    sessions[tab.id] = { url: tab.url, documentId };
+    await chrome.storage.session.set({ pickerSessions: sessions });
+  });
+  return {};
+}
+
+async function endPickerSession(tabId) {
+  return serialize(async () => {
+    const sessions = await pickerSessions();
+    const session = sessions[tabId];
+    delete sessions[tabId];
+    await chrome.storage.session.set({ pickerSessions: sessions });
+    return session;
+  });
+}
+
+// Gives back site access that was granted just for this picker.
+async function cancelPicker(tab) {
+  const session = await endPickerSession(tab.id);
+  if (session) await releaseUnusedOrigins([session.url]);
+  return {};
+}
+
 // The picker runs inside a web page; trust only its selectors, and take the
-// URL and title from the tab Chrome reports, not from the message.
-async function savePickerWatch(message, tab) {
+// URL and title from Chrome, not from the message.
+async function savePickerWatch(message, sender) {
+  const { tab } = sender;
+  const session = (await pickerSessions())[tab.id];
+  if (!session || session.documentId !== sender.documentId) throw new Error('Start the picker again on this page');
+  const { url } = session;
   const toSelectors = (list) => (Array.isArray(list) ? list : [])
     .filter((expr) => typeof expr === 'string')
     .map((expr) => ({ type: 'css', expr }));
   const selectors = toSelectors(message.selectors);
   if (!selectors.length) throw new Error('Select at least one element');
   const watch = await enforcePolicy(sanitizeWatch({
-    url: tab.url,
+    url,
     name: typeof tab.title === 'string' ? tab.title.slice(0, 200) : '',
     selectors,
     excludes: toSelectors(message.excludes),
-  }), { adding: 1 });
+  }));
   // If site access hasn't been granted yet, the watch is still saved; its first
   // check reports the missing access and the inbox offers to grant it.
-  await updateWatches((all) => {
-    all[watch.id] = watch;
-  });
+  await addWatches([watch]);
+  await endPickerSession(tab.id);
   checkWatch(watch.id);
   if (!(await chrome.permissions.contains({ origins: [originPattern(watch.url)] }))) openInbox(watch.id);
   return { id: watch.id };

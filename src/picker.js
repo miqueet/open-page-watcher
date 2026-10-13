@@ -1,5 +1,5 @@
-// Element picker. Injected into the active tab only when the user clicks
-// "Select parts of this page" in the popup. Runs in the extension's isolated
+// Element picker. Injected into the active tab only when the user starts it
+// from the popup, the right-click menu or the keyboard shortcut. Runs in the extension's isolated
 // world, so the page's own scripts can't see or call it.
 (() => {
   if (window.__openPageWatcherPicker) return;
@@ -69,7 +69,10 @@
     return target === host || bar.contains(target);
   }
 
+  // Only real input from the user counts: the page could dispatch fake
+  // clicks and key presses to pick and save parts of its choosing.
   function onMove(e) {
+    if (!e.isTrusted) return;
     const el = e.target;
     if (isOurs(el) || !(el instanceof Element)) {
       hoverBox.hidden = true;
@@ -80,7 +83,7 @@
   }
 
   function onClick(e) {
-    if (isOurs(e.target) || e.composedPath().includes(host)) return;
+    if (!e.isTrusted || isOurs(e.target) || e.composedPath().includes(host)) return;
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();
@@ -116,9 +119,10 @@
   }
 
   function onKey(e) {
+    if (!e.isTrusted) return;
     if (e.key === 'Escape') {
       e.preventDefault();
-      stop();
+      cancel();
     } else if (e.key === 'Enter' && selected.length && !saveBtn.disabled) {
       e.preventDefault();
       save();
@@ -200,13 +204,21 @@
     delete window.__openPageWatcherPicker;
   }
 
+  function cancel() {
+    stop();
+    chrome.runtime.sendMessage({ type: 'picker:cancel' }).catch(() => {});
+  }
+
   function redrawAll() {
     hoverBox.hidden = true;
     redraw();
   }
 
-  saveBtn.addEventListener('click', save);
-  cancelBtn.addEventListener('click', stop);
+  saveBtn.addEventListener('click', (e) => e.isTrusted && save());
+  cancelBtn.addEventListener('click', (e) => e.isTrusted && cancel());
+  // Lets the extension note which page the picker was started on; a save is
+  // only accepted from that same page.
+  chrome.runtime.sendMessage({ type: 'picker:start' }).catch(() => {});
   document.addEventListener('mousemove', onMove, true);
   document.addEventListener('click', onClick, true);
   for (const t of ['mousedown', 'mouseup', 'pointerdown', 'pointerup', 'submit']) document.addEventListener(t, block, true);

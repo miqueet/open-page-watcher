@@ -3,19 +3,23 @@
   "properties": {
     "allowedSites": {
       "title": "Allowed sites",
-      "description": "If set, only these sites can be watched. An entry like example.com also covers its subdomains.",
+      "description": "If set, only these sites can be watched. An entry like example.com also covers its subdomains. Entries that aren't a host name match nothing.",
       "type": "array",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
     "blockedSites": {
       "title": "Blocked sites",
       "description": "Sites that can never be watched. An entry like example.com also covers its subdomains.",
       "type": "array",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
     "disableCookies": {
-      "title": "Never send cookies",
-      "description": "Checks never include the user's cookies, so watches can't act as the signed-in user.",
+      "title": "Never use the signed-in session",
+      "description": "Checks never include the user's cookies, and render-in-tab mode (which loads pages as the signed-in user) is turned off, so watches can't act as the user.",
       "type": "boolean"
     },
     "disableRenderInTab": {
