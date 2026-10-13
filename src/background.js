@@ -1,5 +1,8 @@
 import { extractText } from './lib/extract.js';
-import { conditionMet, addedText } from './lib/conditions.js';
+import { conditionMet } from './lib/conditions.js';
+import {
+  summarizeChange, inQuietHours, shouldHold, readyToFlush, queueAlert, digestMessage,
+} from './lib/alerts.js';
 import { pdfToText } from './lib/pdf.js';
 import { getPolicy, checkSiteAllowed, applyPolicy } from './lib/policy.js';
 import {
@@ -36,7 +39,9 @@ async function setup() {
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === TICK_ALARM) runDueChecks();
+  if (alarm.name !== TICK_ALARM) return;
+  runDueChecks();
+  flushAlerts().catch((e) => console.warn('Held alerts failed', e));
 });
 
 async function runDueChecks() {
@@ -137,11 +142,14 @@ async function record(watch, result, error, { via, started }) {
     if (via !== 'live') w.nextCheckAt = nextCheckTime(w, now);
     w.lastError = '';
     w.errorCount = 0;
-    if (previous && changed) w.lastChangedAt = now;
+    if (previous && changed) {
+      w.lastChangedAt = now;
+      w.lastSummary = summarizeChange(previous.text, result.text, 160);
+    }
     if (alert) w.unread = true;
   });
   await appendLog(id, logEntry);
-  if (alert) await sendAlert(watch, previous.text, result.text).catch((e) => console.warn('Alert failed', e));
+  if (alert) await deliverAlert(watch, previous.text, result.text).catch((e) => console.warn('Alert failed', e));
   await updateBadge();
   await broadcast({ type: 'changed', id });
 }
@@ -375,19 +383,53 @@ function ensureOffscreen() {
 // ---------------------------------------------------------------------------
 // Alerts
 
-async function sendAlert(watch, oldText, newText) {
-  if (watch.notify) {
-    const added = addedText(oldText, newText).trim();
-    await chrome.notifications.create(`watch:${watch.id}:${Date.now()}`, {
+// Sends the alert now, or holds it for quiet hours or the combined summary.
+async function deliverAlert(watch, oldText, newText) {
+  if (!watch.notify && !watch.sound) return;
+  const summary = summarizeChange(oldText, newText);
+  const now = Date.now();
+  if (!shouldHold(await getSettings(), now)) {
+    await notify([{ id: watch.id, name: watch.name, summary, t: now, count: 1, notify: watch.notify, sound: watch.sound }], now);
+    return;
+  }
+  await serialize(async () => {
+    const { pendingAlerts = [] } = await chrome.storage.local.get('pendingAlerts');
+    const alert = { id: watch.id, name: watch.name, summary, t: now, notify: watch.notify, sound: watch.sound };
+    await chrome.storage.local.set({ pendingAlerts: queueAlert(pendingAlerts, alert) });
+  });
+  await flushAlerts(now);
+}
+
+// Sends held alerts once quiet hours are over or the summary is due. Watches
+// the user has already looked at (no longer unread) are left out.
+async function flushAlerts(now = Date.now()) {
+  const settings = await getSettings();
+  const batch = await serialize(async () => {
+    const { pendingAlerts = [], lastDigestAt = 0 } = await chrome.storage.local.get(['pendingAlerts', 'lastDigestAt']);
+    if (!readyToFlush(settings, pendingAlerts, lastDigestAt, now)) return null;
+    await chrome.storage.local.set({ pendingAlerts: [], lastDigestAt: now });
+    return pendingAlerts;
+  });
+  if (!batch) return;
+  const watches = await getWatches();
+  await notify(batch.filter((p) => watches[p.id]?.unread), now);
+}
+
+async function notify(alerts, now) {
+  const shown = alerts.filter((a) => a.notify);
+  if (shown.length) {
+    const { title, message } = digestMessage(shown);
+    const single = shown.length === 1;
+    await chrome.notifications.create(single ? `watch:${shown[0].id}:${now}` : `digest:${now}`, {
       type: 'basic',
       iconUrl: chrome.runtime.getURL('icons/icon128.png'),
-      title: `Changed: ${watch.name}`.slice(0, 120),
-      message: (added || 'Content was removed or rearranged.').slice(0, 300),
-      buttons: [{ title: 'View changes' }, { title: 'Open page' }],
+      title,
+      message,
+      buttons: single ? [{ title: 'View changes' }, { title: 'Open page' }] : [{ title: 'View changes' }],
       priority: 1,
     });
   }
-  if (watch.sound) {
+  if (alerts.some((a) => a.sound)) {
     await ensureOffscreen();
     await chrome.runtime.sendMessage({ target: 'offscreen', type: 'beep' }).catch(() => {});
   }
@@ -396,8 +438,10 @@ async function sendAlert(watch, oldText, newText) {
 // Tells the user once a watch has failed several checks in a row, then at
 // most every few minutes while it keeps failing.
 async function maybeAlertError(watch, now) {
-  const { errorAlerts } = await getSettings();
+  const settings = await getSettings();
+  const { errorAlerts } = settings;
   if (!errorAlerts.enabled || watch.errorCount < errorAlerts.after) return;
+  if (inQuietHours(settings, new Date(now))) return; // it will still be failing afterwards
   // Kept in session storage: survives service worker restarts, not browser restarts.
   const { errorAlertTimes = {} } = await chrome.storage.session.get('errorAlertTimes');
   if (now - (errorAlertTimes[watch.id] || 0) < errorAlerts.minIntervalMinutes * 60_000) return;
@@ -420,13 +464,14 @@ function watchIdFromNotification(notificationId) {
 
 chrome.notifications.onClicked.addListener((notificationId) => {
   const id = watchIdFromNotification(notificationId);
-  if (id) openInbox(id);
+  if (id || notificationId.startsWith('digest:')) openInbox(id);
   chrome.notifications.clear(notificationId);
 });
 
 chrome.notifications.onButtonClicked.addListener(async (notificationId, buttonIndex) => {
   const id = watchIdFromNotification(notificationId);
   chrome.notifications.clear(notificationId);
+  if (notificationId.startsWith('digest:')) return openInbox(null);
   if (!id) return;
   if (buttonIndex === 0) return openInbox(id);
   const watch = await getWatch(id);
@@ -434,7 +479,7 @@ chrome.notifications.onButtonClicked.addListener(async (notificationId, buttonIn
 });
 
 async function openInbox(id) {
-  const url = `${INBOX_URL}#/w/${encodeURIComponent(id)}`;
+  const url = id ? `${INBOX_URL}#/w/${encodeURIComponent(id)}` : `${INBOX_URL}#/unread`;
   const [existing] = await chrome.tabs.query({ url: `${INBOX_URL}*` });
   if (existing) {
     await chrome.tabs.update(existing.id, { url, active: true });
@@ -582,6 +627,7 @@ const uiHandlers = {
 
   async saveSettings({ settings }) {
     await chrome.storage.local.set({ settings: sanitizeSettings(settings) });
+    await flushAlerts(); // e.g. quiet hours were just turned off
     return {};
   },
 

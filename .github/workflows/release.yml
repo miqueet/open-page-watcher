@@ -30,17 +30,22 @@ jobs:
             echo "EXISTS=1" >> "$GITHUB_ENV"
             git fetch --depth=1 origin "refs/tags/$tag:refs/tags/$tag"
             git checkout "$tag" -- manifest.json src icons LICENSE README.md
+            rm -f managed_schema.json
+            git checkout "$tag" -- managed_schema.json 2>/dev/null || true
           fi
       - run: npm test
       - name: Build zips
         run: |
           name="open-page-watcher-$TAG"
           mkdir -p "dist/$name" dist/webstore
+          files="manifest.json src icons LICENSE"
+          if [ -f managed_schema.json ]; then files="$files managed_schema.json"; fi
           # For "Load unpacked": everything inside a named folder.
-          cp -r manifest.json src icons LICENSE README.md "dist/$name/"
+          cp -r $files README.md "dist/$name/"
           (cd dist && zip -rqX "$name.zip" "$name")
           # For the Chrome Web Store: manifest.json at the root of the zip.
-          cp -r manifest.json src icons LICENSE dist/webstore/
+          cp -r $files dist/webstore/
+          node scripts/check-package.mjs dist/webstore
           (cd dist/webstore && zip -rqX "../$name-chrome-web-store.zip" .)
           (cd dist && sha256sum "$name.zip" "$name-chrome-web-store.zip" > "$name.sha256")
           unzip -l "dist/$name-chrome-web-store.zip" | grep -q " manifest.json$"
