@@ -1,5 +1,6 @@
 import { extractText } from './lib/extract.js';
 import { conditionMet, changedText } from './lib/conditions.js';
+import { selectJson, jsonValuesText } from './lib/jsonpath.js';
 import { highlightChanges, HIGHLIGHT_CSS } from './lib/highlight.js';
 import {
   summarizeChange, inQuietHours, shouldHold, readyToFlush, queueAlert, digestMessage,
@@ -251,6 +252,7 @@ async function record(watch, result, error, { via, started, signIn = false, scri
     });
   }
   logEntry.alerted = alert;
+  if (alert && watch.pauseAfterAlert) logEntry.note = 'Paused after this alert (“Pause after the first alert” is on)';
   if (cookiesTurnedOn) logEntry.note = 'Turned on “Send my cookies” because the page asked you to sign in';
   else if (rebaseline) logEntry.note = 'New starting point after changing how the page is loaded';
   await updateWatches((all) => {
@@ -272,6 +274,7 @@ async function record(watch, result, error, { via, started, signIn = false, scri
       w.lastSummary = summarizeChange(previous.text, result.text, 160);
     }
     if (alert) w.unread = true;
+    if (alert && w.pauseAfterAlert) w.paused = true;
   });
   await appendLog(id, logEntry);
   if (alert) await deliverAlert(watch, previous.text, result.text).catch((e) => console.warn('Alert failed', e));
@@ -316,6 +319,18 @@ async function fetchAndExtract(watch, policy) {
     body = new TextDecoder('utf-8').decode(bytes);
   }
 
+  const jsonPaths = watch.selectors.filter((sel) => sel.type === 'json');
+  if (jsonPaths.length) {
+    let data;
+    try {
+      data = JSON.parse(body);
+    } catch {
+      throw new Error("The page isn't JSON, so the JSON paths can't be used");
+    }
+    const values = jsonPaths.flatMap((sel) => selectJson(data, sel.expr));
+    if (!values.length) throw new Error('None of the JSON paths matched anything');
+    return { text: jsonValuesText(values), kind: 'json' };
+  }
   if (/json/i.test(contentType)) {
     try {
       // Pretty-printing can blow up deeply nested input; keep the raw body then.
@@ -932,6 +947,17 @@ const uiHandlers = {
     }
     await broadcast({ type: 'changed', id: clean.id });
     return { id: clean.id };
+  },
+
+  // Adds several pages at once with the same settings.
+  async createWatches({ watches }) {
+    if (!Array.isArray(watches) || !watches.length) throw new Error('Enter at least one address');
+    if (watches.length > 200) throw new Error('Add at most 200 pages at a time');
+    const clean = [];
+    for (const w of watches) clean.push(await enforcePolicy(sanitizeWatch({ ...w, id: undefined })));
+    await addWatches(clean);
+    for (const w of clean) checkWatch(w.id);
+    return { ids: clean.map((w) => w.id) };
   },
 
   async duplicateWatch({ id }) {

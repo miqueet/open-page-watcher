@@ -291,6 +291,58 @@ try {
     assert.equal(h.text, JSON.stringify({ price, ok: true }, null, 2));
   });
 
+  await step('JSON paths watch only the chosen values', async () => {
+    const res = await send({ type: 'createWatch', watch: { url: `${base}/data.json`, selectors: [{ type: 'json', expr: '$.price' }] } });
+    const h = await waitFor(async () => (await history(res.id))[0]);
+    assert.equal(h.text, price);
+    const html = await send({ type: 'createWatch', watch: { url: `${base}/product`, selectors: [{ type: 'json', expr: '$.price' }] } });
+    await waitFor(async () => (await watchOf(html.id)).lastCheckedAt);
+    assert.match((await watchOf(html.id)).lastError, /isn't JSON/);
+    await send({ type: 'bulk', ids: [res.id, html.id], action: 'delete' });
+  });
+
+  await step('ignored lines are not changes, and pause after the first alert', async () => {
+    const oldPrice = price;
+    const id = (await send({
+      type: 'createWatch',
+      watch: { url: `${base}/product`, selectors: [{ type: 'css', expr: '#price' }, { type: 'css', expr: '.stock' }], ignore: { lines: ['/^In stock|Only \\d+ left$/'] }, pauseAfterAlert: true },
+    })).id;
+    await waitFor(async () => (await history(id)).length === 1);
+    const oldStock = stock;
+    stock = 'Only 2 left';
+    await send({ type: 'checkNow', id });
+    assert.equal((await history(id)).length, 1, 'only an ignored line changed');
+    assert.equal((await watchOf(id)).paused, false);
+    price = `${oldPrice}1`;
+    await send({ type: 'checkNow', id });
+    assert.equal((await history(id)).length, 2);
+    assert.equal((await watchOf(id)).paused, true);
+    stock = oldStock;
+    price = oldPrice;
+    await send({ type: 'deleteWatch', id });
+  });
+
+  await step('several pages can be added at once and history downloads as CSV', async () => {
+    await page.evaluate(() => { location.hash = '#/new-many'; });
+    await page.fill('form textarea', `${base}/product\n${base}/links\n${base}/product`);
+    await page.fill('form input[placeholder^="e.g."]', 'bulk-added');
+    await page.click('form button[type=submit]');
+    const added = await waitFor(async () => {
+      const all = Object.values((await page.evaluate(() => chrome.storage.local.get('watches'))).watches);
+      const list = all.filter((w) => w.labels.includes('bulk-added'));
+      return list.length === 2 && list.every((w) => w.lastCheckedAt) && list;
+    });
+    assert.deepEqual(added.map((w) => w.url).sort(), [`${base}/links`, `${base}/product`]);
+    await page.evaluate((i) => { location.hash = `#/w/${i}`; }, added[0].id);
+    const button = page.locator('button', { hasText: 'Download CSV' });
+    await waitFor(async () => !(await button.isDisabled()));
+    const [download] = await Promise.all([page.waitForEvent('download'), button.click()]);
+    const csv = fs.readFileSync(await download.path(), 'utf8');
+    assert.match(csv, /^﻿Saved at,First number,Text\r\n\d{4}-/);
+    await page.evaluate(() => { location.hash = '#/'; });
+    await send({ type: 'bulk', ids: added.map((w) => w.id), action: 'delete' });
+  });
+
   await step('fetched pages never load subresources', async () => {
     assert.equal(trackerHits, 0);
   });

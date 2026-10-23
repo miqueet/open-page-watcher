@@ -128,5 +128,31 @@ test('ignore options normalize what counts as a change', async () => {
   assert.equal(comparisonKey('Price $10', { numbers: true }), comparisonKey('Price $12', { numbers: true }));
   assert.equal(comparisonKey('In  Stock\n', { whitespace: true, case: true }), comparisonKey('in stock', { whitespace: true, case: true }));
   assert.deepEqual(sanitizeWatch({ url: 'https://e.com', ignore: { dates: 1, numbers: true } }).ignore,
-    { case: false, whitespace: false, numbers: true, dates: false });
+    { case: false, whitespace: false, numbers: true, dates: false, order: false, lines: [] });
+});
+
+test('ignored lines and line order do not count as changes', async () => {
+  const { comparisonKey } = await import('../src/lib/watch.js');
+  const ignore = { lines: ['last updated', '/^Visitors: \\d+$/'] };
+  assert.equal(comparisonKey('A\nLast Updated 9:00\nVisitors: 12\nB', ignore), comparisonKey('A\nLast updated 10:00\nVisitors: 99\nB', ignore));
+  assert.notEqual(comparisonKey('A\nB', ignore), comparisonKey('A\nC', ignore));
+  assert.equal(comparisonKey('x\ny\nz', { order: true }), comparisonKey('z\nx\ny', { order: true }));
+  assert.notEqual(comparisonKey('x\ny', {}), comparisonKey('y\nx', {}));
+  assert.deepEqual(sanitizeWatch({ url: 'https://e.com', ignore: { lines: [' a ', '', 5, 'b'] } }).ignore.lines, ['a', 'b']);
+  assert.throws(() => sanitizeWatch({ url: 'https://e.com', ignore: { lines: ['/(/'] } }), SyntaxError);
+});
+
+test('JSON paths are validated and kept apart from page selectors', () => {
+  const w = sanitizeWatch({ url: 'https://e.com/api', selectors: [{ type: 'json', expr: '$.items[*].price', attr: 'x' }] });
+  assert.deepEqual(w.selectors, [{ type: 'json', expr: '$.items[*].price' }]);
+  assert.throws(() => sanitizeWatch({ url: 'https://e.com', selectors: [{ type: 'json', expr: '$..price' }] }), /not supported/);
+  assert.throws(() => sanitizeWatch({ url: 'https://e.com', selectors: [{ type: 'json', expr: 'a' }, { type: 'css', expr: 'p' }] }), /mixed/);
+  assert.throws(() => sanitizeWatch({ url: 'https://e.com', mode: 'tab', selectors: [{ type: 'json', expr: 'a' }] }), /downloaded/);
+  // Exclusions are page selectors only.
+  assert.equal(sanitizeWatch({ url: 'https://e.com', excludes: [{ type: 'json', expr: 'a' }] }).excludes[0].type, 'css');
+});
+
+test('pause after alert is off unless asked for', () => {
+  assert.equal(sanitizeWatch({ url: 'https://e.com' }).pauseAfterAlert, false);
+  assert.equal(sanitizeWatch({ url: 'https://e.com', pauseAfterAlert: true }).pauseAfterAlert, true);
 });
