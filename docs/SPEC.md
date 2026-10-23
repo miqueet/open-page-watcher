@@ -111,6 +111,12 @@ These run on the device but were left out as security trade-offs:
    check gets through again. Render-in-tab mode always loads the page as the
    signed-in user, so the organization setting that forces cookies off also
    turns render-in-tab and the automatic switch off.
+   Downloads ask without following redirects first. A redirect that leads to
+   a site the extension has no access to (typically a single sign-on host)
+   can't be followed, so it counts as a sign-in page; timer checks then don't
+   follow it again until the page stops redirecting, which keeps Chrome from
+   logging a blocked request on every check. Checks the user starts still
+   follow it. The sign-in banner also offers reading the page in a hidden tab.
    A downloaded page that only works with scripts (a "browser not supported"
    or "enable JavaScript" placeholder, an empty app mount point such as
    `#root`, or selected parts missing from a near-empty page with scripts) is

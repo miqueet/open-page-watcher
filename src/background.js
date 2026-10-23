@@ -59,7 +59,7 @@ async function runDueChecks() {
     .filter((w) => isDue(applyPolicy(policy, w), now) && !inFlight.has(w.id))
     .sort((a, b) => a.lastCheckedAt - b.lastCheckedAt);
   const workers = Array.from({ length: Math.min(MAX_CONCURRENT, due.length) }, async () => {
-    while (due.length) await checkWatch(due.shift().id);
+    while (due.length) await checkWatch(due.shift().id, { scheduled: true });
   });
   await Promise.all(workers);
 }
@@ -129,7 +129,8 @@ function notifyProblem(e) {
 
 // Runs one check. `via` is 'schedule' (also used for "Check now") or 'live'
 // (an open tab of the page changed); live checks read that tab directly.
-async function checkWatch(id, { via = 'schedule', tabId } = {}) {
+// `scheduled` is set for checks the timer starts, as opposed to the user.
+async function checkWatch(id, { via = 'schedule', tabId, scheduled = false } = {}) {
   if (inFlight.has(id)) return;
   inFlight.add(id);
   const started = Date.now();
@@ -144,6 +145,7 @@ async function checkWatch(id, { via = 'schedule', tabId } = {}) {
     let signIn = false;
     let scripts = '';
     let cookiesTurnedOn = false;
+    let redirectBlocked = false;
     try {
       checkSiteAllowed(policy, watch.url);
       const granted = await chrome.permissions.contains({ origins: [originPattern(watch.url)] });
@@ -152,12 +154,12 @@ async function checkWatch(id, { via = 'schedule', tabId } = {}) {
       else if (watch.mode === 'tab') result = await renderAndExtract(watch);
       else {
         try {
-          result = await fetchAndExtract(watch, policy);
+          result = await fetchAndExtract(watch, policy, { scheduled });
         } catch (e) {
           // The page wants the user signed in: try once with their cookies,
           // and keep them on for this watch if that gets past the sign-in page.
           if (!e?.signIn || watch.sendCookies || watch.autoCookies === false || policy.disableCookies) throw e;
-          result = await fetchAndExtract({ ...watch, sendCookies: true }, policy);
+          result = await fetchAndExtract({ ...watch, sendCookies: true }, policy, { scheduled });
           cookiesTurnedOn = true;
         }
       }
@@ -169,22 +171,28 @@ async function checkWatch(id, { via = 'schedule', tabId } = {}) {
     } catch (e) {
       error = e?.message || String(e);
       signIn = e?.signIn === true;
-      if (signIn) error = signInMessage(watch, policy);
+      redirectBlocked = e?.redirectBlocked === true;
+      if (signIn) error = signInMessage(watch, policy, { redirectBlocked });
       scripts = e?.scriptsNeeded || '';
       if (scripts && !renderAllowed(policy)) error += " Your organization doesn't allow reading pages in a hidden tab.";
     }
-    await record(watch, result, error, { via, started, signIn, scripts, cookiesTurnedOn });
+    await record(watch, result, error, {
+      via, started, signIn, scripts, cookiesTurnedOn, redirectBlocked,
+    });
   } finally {
     inFlight.delete(id);
   }
 }
 
-function signInMessage(watch, policy) {
+function signInMessage(watch, policy, { redirectBlocked = false } = {}) {
+  // The sign-in page itself wasn't read: the page sent the check on to
+  // another site (usually its single sign-on page).
+  const sent = redirectBlocked ? ' (it sent the check on to another site, usually its sign-in page)' : '';
   if (watch.mode === 'fetch' && !watch.sendCookies) {
-    if (policy.disableCookies) return `${SIGN_IN_MESSAGE}. Your organization doesn't allow sending your cookies, which pages behind a sign-in need.`;
-    if (watch.autoCookies === false) return `${SIGN_IN_MESSAGE}. If you're signed in to the site, turn on “Send my cookies” for this watch.`;
+    if (policy.disableCookies) return `${SIGN_IN_MESSAGE}${sent}. Your organization doesn't allow sending your cookies, which pages behind a sign-in need.`;
+    if (watch.autoCookies === false) return `${SIGN_IN_MESSAGE}${sent}. If you're signed in to the site, turn on “Send my cookies” for this watch.`;
   }
-  return `${SIGN_IN_MESSAGE}. Sign in to the site in Chrome, then check again.`;
+  return `${SIGN_IN_MESSAGE}${sent}. Sign in to the site in Chrome, then check again.`;
 }
 
 // Reading a page in a hidden tab loads it as the signed-in user, so a policy
@@ -193,7 +201,9 @@ function renderAllowed(policy) {
   return !policy.disableRenderInTab && !policy.disableCookies;
 }
 
-async function record(watch, result, error, { via, started, signIn = false, scripts = '', cookiesTurnedOn = false }) {
+async function record(watch, result, error, {
+  via, started, signIn = false, scripts = '', cookiesTurnedOn = false, redirectBlocked = false,
+}) {
   const { id } = watch;
   const now = Date.now();
   const logEntry = { t: now, ok: !error, changed: false, alerted: false, error, ms: now - started, via };
@@ -207,6 +217,7 @@ async function record(watch, result, error, { via, started, signIn = false, scri
       w.lastError = error;
       w.errorCount = (w.errorCount || 0) + 1;
       if (signIn) w.signInNeeded = true;
+      w.redirectBlocked = redirectBlocked;
       w.scriptsNeeded = scripts;
       return { ...w };
     });
@@ -266,6 +277,7 @@ async function record(watch, result, error, { via, started, signIn = false, scri
     if (w.signInHandled && w.onSignIn === 'pause') w.paused = false; // paused only until signed in
     w.signInNeeded = false;
     w.signInHandled = false;
+    w.redirectBlocked = false;
     w.scriptsNeeded = '';
     w.scriptsAsked = false;
     w.rebaseline = false;
@@ -282,18 +294,34 @@ async function record(watch, result, error, { via, started, signIn = false, scri
   await broadcast({ type: 'changed', id });
 }
 
-async function fetchAndExtract(watch, policy) {
+async function fetchAndExtract(watch, policy, { scheduled = false } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const options = {
+    credentials: watch.sendCookies ? 'include' : 'omit',
+    cache: 'no-store',
+    signal: controller.signal,
+  };
   let response;
   let bytes;
   try {
-    response = await fetch(watch.url, {
-      credentials: watch.sendCookies ? 'include' : 'omit',
-      cache: 'no-store',
-      redirect: 'follow',
-      signal: controller.signal,
-    });
+    // Asking first without following redirects shows whether the page sends
+    // the check elsewhere. Following a redirect to a site the extension has
+    // no access to (typically a single sign-on page) is blocked by Chrome,
+    // which logs a CORS error to the extension's error list each time.
+    response = await fetch(watch.url, { ...options, redirect: 'manual' });
+    if (response.type === 'opaqueredirect') {
+      // Last time that redirect led somewhere unreadable: the timer doesn't
+      // try again until the page stops redirecting. Checks the user starts
+      // still follow it.
+      if (scheduled && watch.redirectBlocked) throw blockedRedirectError();
+      try {
+        response = await fetch(watch.url, { ...options, redirect: 'follow' });
+      } catch (e) {
+        if (e.name === 'AbortError') throw e;
+        throw blockedRedirectError();
+      }
+    }
     if (needsSignIn({ status: response.status, watchUrl: watch.url, finalUrl: response.url || watch.url })) throw signInError();
     if (!response.ok) throw new Error(`The site answered with HTTP ${response.status}`);
     if (response.redirected) await checkRedirect(watch, response.url, policy);
@@ -363,6 +391,12 @@ async function fetchAndExtract(watch, policy) {
   }
   if (!result?.ok) throw new Error(result?.error || 'Could not read the page');
   return result;
+}
+
+function blockedRedirectError() {
+  const e = signInError();
+  e.redirectBlocked = true;
+  return e;
 }
 
 // A redirect must land on a site the organization allows, and on the same

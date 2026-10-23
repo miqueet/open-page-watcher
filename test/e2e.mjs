@@ -26,6 +26,7 @@ let price = '$10';
 let stock = 'In stock';
 let cookieSeen = null;
 let trackerHits = 0;
+let ssoHits = 0;
 let feedItems = ['Hello world', 'Second post'];
 const server = http.createServer((req, res) => {
   if (req.url === '/product') {
@@ -124,6 +125,21 @@ const server = http.createServer((req, res) => {
     }
     res.setHeader('content-type', 'text/html');
     return res.end(`<!doctype html><title>Members</title><p id="secret">Members only ${price}</p>`);
+  }
+  if (req.url === '/case') {
+    // Like a single sign-on site: signed out, it sends you to a sign-in page
+    // on another host, which the extension has no access to.
+    if (!/(^|; )member=1/.test(req.headers.cookie || '')) {
+      res.writeHead(302, { location: `http://localhost:${server.address().port}/sso/auth?state=${Math.random()}` });
+      return res.end();
+    }
+    res.setHeader('content-type', 'text/html');
+    return res.end(`<!doctype html><title>Case</title><p id="status">Case open ${price}</p>`);
+  }
+  if (req.url.startsWith('/sso/auth')) {
+    ssoHits += 1;
+    res.setHeader('content-type', 'text/html');
+    return res.end('<!doctype html><title>Sign in</title><form><input name="user"><input type="password" name="pw"></form>');
   }
   if (req.url.startsWith('/login')) {
     res.setHeader('content-type', 'text/html');
@@ -870,6 +886,52 @@ try {
     assert.equal((await watchOf(paused)).paused, false);
     await page.evaluate(() => { location.hash = '#/'; });
     await send({ type: 'deleteWatch', id: paused });
+    await signedIn(false);
+  });
+
+  await step('a redirect to a sign-on site without access is reported as sign in needed, not retried', async () => {
+    await signedIn(false);
+    await clearNotifications();
+    ssoHits = 0;
+    const { id } = await send({ type: 'createWatch', watch: { url: `${base}/case`, selectors: [{ type: 'css', expr: '#status' }] } });
+    let w = await waitFor(async () => { const x = await watchOf(id); return x.signInHandled && x; });
+    assert.match(w.lastError, /asked you to sign in \(it sent the check on to another site/);
+    assert.equal(w.signInNeeded, true);
+    assert.equal(w.redirectBlocked, true);
+    assert.equal((await history(id)).length, 0);
+    assert.ok((await notificationIds()).some((n) => n.startsWith(`signin:${id}:`)), 'sign-in notification shown');
+    const hits = ssoHits;
+    assert.ok(hits >= 1 && hits <= 2, `followed the redirect ${hits} times`);
+
+    // Timer checks don't follow the redirect again while it still redirects.
+    const ran = async () => {
+      const before = (await watchOf(id)).lastCheckedAt;
+      await page.evaluate(async (i) => {
+        const k = 'watches';
+        const all = (await chrome.storage.local.get(k))[k];
+        all[i].nextCheckAt = 1;
+        await chrome.storage.local.set({ [k]: all });
+        await chrome.alarms.create('tick', { when: Date.now(), periodInMinutes: 1 });
+      }, id);
+      await waitFor(async () => (await watchOf(id)).lastCheckedAt > before);
+    };
+    await ran();
+    assert.equal(ssoHits, hits, 'the sign-on page was not requested again');
+    assert.equal((await watchOf(id)).signInNeeded, true);
+
+    // The sign-in banner offers a hidden tab; once signed in, a check gets through.
+    await page.evaluate((i) => { location.hash = `#/w/${i}`; }, id);
+    await page.waitForSelector('.banner:has-text("another site") button:has-text("Read it in a hidden tab")');
+    await page.evaluate(() => { location.hash = '#/'; });
+    await signedIn(true);
+    await ran();
+    w = await watchOf(id);
+    assert.equal(w.lastError, '');
+    assert.equal(w.signInNeeded, false);
+    assert.equal(w.redirectBlocked, false);
+    assert.equal(w.sendCookies, true, 'cookies turned on');
+    assert.match((await history(id))[0].text, /Case open/);
+    await send({ type: 'deleteWatch', id });
     await signedIn(false);
   });
 
