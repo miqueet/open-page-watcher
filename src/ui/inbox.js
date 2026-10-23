@@ -1241,8 +1241,8 @@ function render() {
   }
   renderList();
   // Don't wipe a form the user is typing in.
-  const { edit, isNew, settings } = route();
-  if ((edit || isNew || settings) && $('detail').querySelector('form') && (state.picking || document.activeElement?.closest('form'))) return;
+  const { edit, isNew, settings, isNewMany } = route();
+  if ((edit || isNew || settings || isNewMany) && $('detail').querySelector('form') && (state.picking || document.activeElement?.closest('form'))) return;
   renderDetail();
 }
 
