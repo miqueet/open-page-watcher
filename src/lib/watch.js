@@ -208,6 +208,8 @@ export function sanitizeWatch(input, existing = {}) {
     lastSummary: typeof existing.lastSummary === 'string' ? existing.lastSummary : '',
     signInNeeded: existing.signInNeeded === true,
     signInHandled: existing.signInHandled === true,
+    // The page redirected to a site the extension can't read (a sign-in page).
+    redirectBlocked: existing.redirectBlocked === true,
     scriptsNeeded: ['placeholder', 'empty', 'missing'].includes(existing.scriptsNeeded) ? existing.scriptsNeeded : '',
     scriptsAsked: existing.scriptsAsked === true,
     // The next version is a new starting point (the way the page is loaded
@@ -218,7 +220,7 @@ export function sanitizeWatch(input, existing = {}) {
 
 const RUNTIME_FIELDS = [
   'lastCheckedAt', 'lastChangedAt', 'nextCheckAt', 'lastError', 'errorCount', 'unread', 'lastSummary', 'signInNeeded', 'signInHandled',
-  'scriptsNeeded', 'scriptsAsked', 'rebaseline',
+  'redirectBlocked', 'scriptsNeeded', 'scriptsAsked', 'rebaseline',
 ];
 
 // Fields included in an export file.

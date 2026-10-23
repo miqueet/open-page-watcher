@@ -243,7 +243,21 @@ async function renderDetail() {
       class: 'primary',
       title: 'Opens the page in a new tab. Once you’re signed in and back on the page, it’s checked again.',
       onclick: () => call('openSignIn', { id }).catch((e) => toast(e.message)),
-    }, 'Open page to sign in')) : null;
+    }, 'Open page to sign in'),
+    // A hidden tab loads the page the way Chrome does, signed in, which gets
+    // past single sign-on pages that downloading can't follow.
+    watch.mode !== 'tab' && !watch.paused && !state.policy?.disableRenderInTab && !state.policy?.disableCookies ? el('button', {
+      title: 'Reads the page in a hidden tab that uses your Chrome sign-in for this site, closed right after each check.',
+      onclick: async (e) => {
+        e.target.disabled = true;
+        try {
+          await call('changeLoading', { id, how: 'tab' });
+          toast('This watch now reads the page in a hidden tab.');
+        } catch (err) {
+          toast(err.message);
+        }
+      },
+    }, 'Read it in a hidden tab') : null) : null;
 
   const scriptsBanner = watch.scriptsNeeded && watch.mode !== 'tab' ? scriptsNeededBanner(watch) : null;
 

@@ -66,7 +66,7 @@ from any other proprietary extension.
 
 **Pages behind a sign-in**
 - Notices when a page asks you to sign in, instead of saving the sign-in page
-  as a change
+  as a change, including pages that send you to a separate single sign-on site
 - Once you're signed in, turns on your cookies for that watch by itself (you
   can switch this off)
 - You choose what happens when a sign-in is needed: a notification, open the
