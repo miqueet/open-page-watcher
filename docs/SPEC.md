@@ -9,7 +9,7 @@ code was copied, decompiled or consulted.
 | Distill feature | Open Page Watcher |
 | --- | --- |
 | Watch a whole page | Yes, "Watch whole page" in the popup or the right-click menu |
-| Visual selector to watch parts of a page | Yes, click-to-select picker (multiple elements), with click-inside to exclude parts |
+| Visual selector to watch parts of a page | Yes, click-to-select picker (multiple elements), with click-inside to exclude parts; reselect from the watch editor with current parts highlighted |
 | CSS / XPath selection, exclusions | Yes, editable per watch, plus attributes (`a @href`) |
 | Regex to extract matches | Yes, optional "keep only text matching" regex |
 | Check schedule | Every 1 minute to every 7 days (slider or exact value), or random within a range, optionally only during set hours and days |
@@ -110,7 +110,10 @@ These run on the device but were left out as security trade-offs:
    ping in live mode. A picker save is accepted only from the document the
    picker was started in, for the address it had then (the page can't swap it
    with `pushState`), and the picker ignores synthetic clicks and key presses,
-   so the page can't pick or save for the user. Every field is validated.
+   so the page can't pick or save for the user. A picker opened from the watch
+   editor ("Pick on page") gets its starting selectors and a one-time token in
+   the extension's isolated world; its picks only fill in the editor's fields
+   and are saved by the editor's own Save. Every field is validated.
 10. **Scripts injected into pages are small and passive.** The picker runs only
     when you start it; the live-mode observer only reports that the page
     changed; the highlighter only adds a CSS highlight. When a watch reads a

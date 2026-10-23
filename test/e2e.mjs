@@ -355,6 +355,39 @@ try {
     await tab.close();
   });
 
+  await step('the editor reselects parts on the live page with the picker', async () => {
+    const id = (await send({ type: 'createWatch', watch: {
+      url: `${base}/product`,
+      name: 'Reselect',
+      selectors: [{ type: 'xpath', expr: '//h1' }, { type: 'css', expr: '#price' }, { type: 'css', expr: '.not-on-page' }],
+    } })).id;
+    await page.evaluate((h) => { location.hash = h; }, `#/w/${encodeURIComponent(id)}/edit`);
+    await page.waitForSelector('button.pick:text("Reselect on page")');
+    const [tab] = await Promise.all([context.waitForEvent('page'), page.click('button.pick')]);
+    await tab.setViewportSize({ width: 1000, height: 700 });
+    // Wait for the picker's overlay.
+    await waitFor(() => tab.evaluate(() => [...document.documentElement.children].some((c) => c.tagName === 'DIV')), 15000);
+    await tab.click('#price'); // shown as picked, so this removes it
+    await tab.click('p.stock');
+    await tab.screenshot({ path: process.env.SHOT_RESELECT || path.join(os.tmpdir(), 'opw-reselect.png') });
+    await tab.keyboard.press('Enter');
+    await waitFor(() => tab.isClosed(), 5000);
+    const text = await waitFor(async () => {
+      const v = await page.inputValue('textarea');
+      return v.includes('stock') || v.includes('nth-of-type(2)') ? v : null;
+    }, 5000);
+    const lines = text.split('\n');
+    assert.ok(lines.includes('xpath://h1'), text); // untouched parts keep their original line
+    assert.ok(lines.includes('.not-on-page'), text); // parts not on the page are kept by default
+    assert.ok(!lines.includes('#price'), text);
+    // Nothing is saved until the form is.
+    assert.equal((await watchOf(id)).selectors.length, 3);
+    await page.click('form button[type=submit]');
+    await waitFor(async () => !(await watchOf(id)).selectors.some((x) => x.expr === '#price'), 5000);
+    assert.equal((await watchOf(id)).selectors.length, 3);
+    await send({ type: 'deleteWatch', id });
+  });
+
   await step('export and import round-trip', async () => {
     const exp = await send({ type: 'exportAll' });
     assert.equal(exp.data.format, 'open-page-watcher');
