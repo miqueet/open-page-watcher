@@ -1,5 +1,6 @@
 import { normalizeCondition } from './conditions.js';
 import { parseJsonPath } from './jsonpath.js';
+import { soundName } from './sounds.js';
 
 export const MIN_INTERVAL_MINUTES = 1;
 export const MAX_INTERVAL_MINUTES = 7 * 24 * 60;
@@ -182,6 +183,7 @@ export function sanitizeWatch(input, existing = {}) {
     condition,
     notify: src.notify !== false,
     sound: src.sound === true,
+    soundName: soundName(src.soundName),
     speak: src.speak === true,
     paused: src.paused === true,
     // Pause after the first alert, for one-off events like a restock.

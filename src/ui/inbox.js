@@ -11,6 +11,7 @@ import { encryptBackup, decryptBackup, isEncrypted } from '../lib/backup.js';
 import { getPolicy, isManaged, checkSiteAllowed } from '../lib/policy.js';
 import { historyCsv } from '../lib/csv.js';
 import { SIGN_IN_MESSAGE } from '../lib/signin.js';
+import { SOUNDS, soundName, playSound } from '../lib/sounds.js';
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -657,6 +658,8 @@ function watchForm(watch) {
     match: el('select', {}, el('option', { value: 'all' }, 'all'), el('option', { value: 'any' }, 'any')),
     notify: el('input', { type: 'checkbox', checked: w.notify }),
     sound: el('input', { type: 'checkbox', checked: w.sound }),
+    soundName: el('select', { 'aria-label': 'Sound' },
+      ...Object.entries(SOUNDS).map(([id, s]) => el('option', { value: id }, s.label))),
     speak: el('input', { type: 'checkbox', checked: w.speak === true }),
     historyLimit: el('input', { type: 'number', min: 2, max: 200, value: String(w.historyLimit) }),
     ignore: Object.fromEntries(['dates', 'numbers', 'case', 'whitespace', 'order'].map((k) => [k, el('input', { type: 'checkbox', checked: w.ignore?.[k] === true })])),
@@ -678,6 +681,7 @@ function watchForm(watch) {
   f.scheduleType.value = schedule.type;
   f.onSignIn.value = SIGN_IN_ACTIONS.includes(w.onSignIn) ? w.onSignIn : 'notify';
   f.match.value = condition.match;
+  f.soundName.value = soundName(w.soundName);
 
   const rules = el('div', { class: 'rules' });
   const addRule = (rule) => rules.append(ruleRow(rule, (row) => {
@@ -686,6 +690,16 @@ function watchForm(watch) {
   }));
   condition.rules.forEach(addRule);
 
+  async function previewSound() {
+    const ctx = new AudioContext();
+    try {
+      await playSound(ctx, f.soundName.value);
+    } finally {
+      ctx.close();
+    }
+  }
+  const soundRow = el('div', { class: 'inline sound-choice' }, f.soundName,
+    el('button', { type: 'button', onclick: previewSound }, '▶ Preview'));
   const delayRow = el('label', { class: 'field' }, el('span', {}, 'Wait after load (seconds)'), f.renderDelaySeconds);
   const framesRow = el('label', { class: 'check' }, f.includeFrames,
     el('span', {}, 'Include content inside frames on the page',
@@ -716,6 +730,7 @@ function watchForm(watch) {
     askToRenderRow.hidden = f.mode.value === 'tab';
     randomRow.hidden = f.scheduleType.value !== 'random';
     windowRow.hidden = !f.windowOn.checked;
+    soundRow.hidden = !f.sound.checked;
     matchRow.hidden = rules.children.length < 2;
     noRules.hidden = rules.children.length > 0;
   }
@@ -723,6 +738,7 @@ function watchForm(watch) {
   f.scheduleType.addEventListener('change', sync);
   f.windowOn.addEventListener('change', sync);
   f.sendCookies.addEventListener('change', sync);
+  f.sound.addEventListener('change', sync);
   sync();
 
   const error = el('p', { class: 'error', hidden: true });
@@ -839,6 +855,7 @@ function watchForm(watch) {
         condition: { match: f.match.value, rules: [...rules.children].map((r) => r.read()) },
         notify: f.notify.checked,
         sound: f.sound.checked,
+        soundName: f.soundName.value,
         speak: f.speak.checked,
         historyLimit: Number(f.historyLimit.value),
         ignore: {
@@ -920,6 +937,7 @@ function watchForm(watch) {
     }, '+ Add rule')),
     el('label', { class: 'check' }, f.notify, el('span', {}, 'Desktop notification')),
     el('label', { class: 'check' }, f.sound, el('span', {}, 'Play a sound')),
+    soundRow,
     el('label', { class: 'check' }, f.pauseAfterAlert, el('span', {}, 'Pause after the first alert',
       el('div', { class: 'hint' }, 'For one-off events, like a restock or a results page going up. Resume it any time.'))),
     el('label', { class: 'check' }, f.speak, el('span', {}, 'Read the change aloud',

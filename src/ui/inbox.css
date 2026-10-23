@@ -104,3 +104,4 @@ table.shortcuts td:first-child { padding-right: 24px; }
 .banner + .banner { margin-top: 8px; }
 .banner { flex-wrap: wrap; }
 .banner > span { flex: 1 1 260px; }
+.sound-choice { margin-left: 24px; }

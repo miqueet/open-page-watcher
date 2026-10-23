@@ -156,3 +156,11 @@ test('pause after alert is off unless asked for', () => {
   assert.equal(sanitizeWatch({ url: 'https://e.com' }).pauseAfterAlert, false);
   assert.equal(sanitizeWatch({ url: 'https://e.com', pauseAfterAlert: true }).pauseAfterAlert, true);
 });
+
+test('alert sound choice is cleaned', () => {
+  assert.equal(sanitizeWatch({ url: 'https://example.com' }).soundName, 'chime');
+  assert.equal(sanitizeWatch({ url: 'https://example.com', soundName: 'bell' }).soundName, 'bell');
+  for (const soundName of ['explode', '__proto__', 'toString', 42]) {
+    assert.equal(sanitizeWatch({ url: 'https://example.com', soundName }).soundName, 'chime');
+  }
+});

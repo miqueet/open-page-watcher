@@ -1,5 +1,6 @@
 import { extractText } from './lib/extract.js';
 import { readFeedOrSitemap } from './lib/feeds.js';
+import { playSound } from './lib/sounds.js';
 
 // DOMParser builds an inert document: scripts don't run and subresources
 // (images, stylesheets, iframes) aren't loaded.
@@ -29,28 +30,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   if (message.type === 'beep') {
-    beep().then(() => sendResponse({ ok: true }), () => sendResponse({ ok: false }));
+    beep(message.sound).then(() => sendResponse({ ok: true }), () => sendResponse({ ok: false }));
     return true;
   }
   return false;
 });
 
-async function beep() {
+async function beep(name) {
   const ctx = new AudioContext();
-  const notes = [880, 1175];
-  notes.forEach((freq, i) => {
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    const start = ctx.currentTime + i * 0.18;
-    osc.type = 'sine';
-    osc.frequency.value = freq;
-    gain.gain.setValueAtTime(0.0001, start);
-    gain.gain.exponentialRampToValueAtTime(0.3, start + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.16);
-    osc.connect(gain).connect(ctx.destination);
-    osc.start(start);
-    osc.stop(start + 0.17);
-  });
-  await new Promise((r) => setTimeout(r, 450));
+  await playSound(ctx, name);
   await ctx.close();
 }
