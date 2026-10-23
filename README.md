@@ -115,6 +115,11 @@ team can review this repository and publish it internally or allow-list it.
 - On any page, click the toolbar icon and choose **Watch whole page** or
   **Select parts of page**. With the picker, click the elements you want (click
   again to deselect), then **Save**.
+- To change what an existing watch looks at, open it in the inbox, click
+  **Edit**, then **Reselect on page**. The page opens with the parts you chose
+  before already highlighted; click to add or remove parts, press Enter, and
+  you're taken back to the editor with the fields filled in. Nothing changes
+  until you click **Save**.
 - Chrome asks once per site for permission to read it. Watches on a site you
   haven't allowed show an **Allow** button in the inbox.
 - Open the inbox from the popup to see changes, edit how often a page is

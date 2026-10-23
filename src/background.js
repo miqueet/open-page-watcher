@@ -968,6 +968,10 @@ const uiHandlers = {
     return {};
   },
 
+  async pickForForm(message, sender) {
+    return pickForForm(message, sender);
+  },
+
   async checkNow({ id }) {
     await checkWatch(id);
     return {};
@@ -1076,7 +1080,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   let handler;
   if (message.type === 'picker:start' && sender.tab?.url?.startsWith('http')) {
-    handler = () => startPickerSession(sender.tab, sender.documentId);
+    handler = () => startPickerSession(sender.tab, sender.documentId, message.token);
   } else if (message.type === 'picker:cancel' && sender.tab) {
     handler = () => cancelPicker(sender.tab);
   } else if (message.type === 'picker:save' && sender.tab) {
@@ -1085,7 +1089,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handler = () => onLiveChanged(sender.tab);
   } else if (sender.url?.startsWith(EXTENSION_ORIGIN) && !sender.tab?.url?.startsWith('http')
     && Object.hasOwn(uiHandlers, message.type)) {
-    handler = () => uiHandlers[message.type](message);
+    handler = () => uiHandlers[message.type](message, sender);
   } else {
     return false;
   }
@@ -1105,11 +1109,17 @@ async function pickerSessions() {
   return (await chrome.storage.session.get('pickerSessions')).pickerSessions || {};
 }
 
-async function startPickerSession(tab, documentId) {
+// A picker opened from the watch editor brings the token it was given; that
+// session's picks go back to the editor instead of making a new watch.
+async function startPickerSession(tab, documentId, token) {
   await serialize(async () => {
+    const { formPicks = {} } = await chrome.storage.session.get('formPicks');
+    const pending = formPicks[tab.id];
+    delete formPicks[tab.id];
     const sessions = await pickerSessions();
     sessions[tab.id] = { url: tab.url, documentId };
-    await chrome.storage.session.set({ pickerSessions: sessions });
+    if (pending && typeof token === 'string' && token === pending.token) sessions[tab.id].form = pending;
+    await chrome.storage.session.set({ pickerSessions: sessions, formPicks });
   });
   return {};
 }
@@ -1124,12 +1134,85 @@ async function endPickerSession(tabId) {
   });
 }
 
-// Gives back site access that was granted just for this picker.
+// Gives back site access that was granted just for this picker. A picker
+// started from the editor leaves that to the editor, which may still save.
 async function cancelPicker(tab) {
   const session = await endPickerSession(tab.id);
-  if (session) await releaseUnusedOrigins([session.url]);
+  if (session?.form) {
+    await broadcast({ type: 'pickCancelled', token: session.form.token });
+    await backToEditor(session.form, tab.id);
+  } else if (session) {
+    await releaseUnusedOrigins([session.url]);
+  }
   return {};
 }
+
+// Picking parts for the watch editor in the inbox. The editor asks for site
+// access on the click, then the page opens in a new tab with the picker
+// showing the parts already chosen. The picks only fill in the editor's
+// fields; nothing is saved until the user clicks Save there.
+async function pickForForm({ url, token, selectors, excludes }, sender) {
+  if (typeof url !== 'string' || !isHttpUrl(url)) throw new Error('Enter a full http:// or https:// address.');
+  if (typeof token !== 'string' || !/^[\w-]{16,64}$/.test(token)) throw new Error('Bad request');
+  checkSiteAllowed(await getPolicy(), url);
+  if (!(await chrome.permissions.contains({ origins: [originPattern(url)] }))) throw new Error('Allow access to this site to pick parts on it.');
+  const tab = await chrome.tabs.create({ url, active: true });
+  await serialize(async () => {
+    const { formPicks = {} } = await chrome.storage.session.get('formPicks');
+    formPicks[tab.id] = { token, editorTabId: sender.tab?.id ?? null, pickerTabId: tab.id };
+    await chrome.storage.session.set({ formPicks });
+  });
+  try {
+    await waitForTabComplete(tab.id);
+    const target = { tabId: tab.id };
+    const config = { token, selectors: pickLines(selectors), excludes: pickLines(excludes) };
+    // Both run in the extension's isolated world, out of the page's reach.
+    await chrome.scripting.executeScript({ target, func: (c) => { window.__openPageWatcherPickerConfig = c; }, args: [config] });
+    await chrome.scripting.executeScript({ target, files: ['src/picker.js'] });
+  } catch (e) {
+    await forgetFormPick(tab.id);
+    throw new Error(`Couldn't start picking on the page: ${e?.message || e}`);
+  }
+  return {};
+}
+
+// Selector lines as the editor writes them ("css", "xpath:expr", "... @attr").
+function pickLines(list) {
+  return (Array.isArray(list) ? list : [])
+    .filter((l) => typeof l === 'string')
+    .flatMap((l) => l.split('\n'))
+    .map((l) => l.trim())
+    .filter((l) => l && l.length <= 2000)
+    .slice(0, 200);
+}
+
+async function forgetFormPick(tabId) {
+  return serialize(async () => {
+    const { formPicks = {} } = await chrome.storage.session.get('formPicks');
+    const pending = formPicks[tabId];
+    delete formPicks[tabId];
+    await chrome.storage.session.set({ formPicks });
+    return pending;
+  });
+}
+
+// Switches back to the editor and closes the tab that was opened for picking.
+async function backToEditor(form, pickerTabId) {
+  if (form.editorTabId != null) {
+    const editor = await chrome.tabs.update(form.editorTabId, { active: true }).catch(() => null);
+    if (editor) await chrome.windows.update(editor.windowId, { focused: true }).catch(() => {});
+  }
+  if (pickerTabId === form.pickerTabId) setTimeout(() => chrome.tabs.remove(pickerTabId).catch(() => {}), 600);
+}
+
+// Closing the picking tab by hand counts as cancelling.
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  const pending = await forgetFormPick(tabId);
+  const session = (await pickerSessions())[tabId] ? await endPickerSession(tabId) : null;
+  const form = session?.form || pending;
+  if (form) await broadcast({ type: 'pickCancelled', token: form.token });
+  else if (session) await releaseUnusedOrigins([session.url]);
+});
 
 // The picker runs inside a web page; trust only its selectors, and take the
 // URL and title from Chrome, not from the message.
@@ -1137,6 +1220,12 @@ async function savePickerWatch(message, sender) {
   const { tab } = sender;
   const session = (await pickerSessions())[tab.id];
   if (!session || session.documentId !== sender.documentId) throw new Error('Start the picker again on this page');
+  if (session.form) {
+    await endPickerSession(tab.id);
+    await broadcast({ type: 'picked', token: session.form.token, selectors: pickLines(message.selectors), excludes: pickLines(message.excludes) });
+    await backToEditor(session.form, tab.id);
+    return { form: true };
+  }
   const { url } = session;
   const toSelectors = (list) => (Array.isArray(list) ? list : [])
     .filter((expr) => typeof expr === 'string')

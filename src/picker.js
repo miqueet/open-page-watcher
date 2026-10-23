@@ -4,6 +4,12 @@
 (() => {
   if (window.__openPageWatcherPicker) return;
   window.__openPageWatcherPicker = true;
+  // Set by the extension just before this file when the picker was opened
+  // from the watch editor: the parts already chosen, and a token that sends
+  // the picks back to that editor.
+  const config = window.__openPageWatcherPickerConfig || null;
+  delete window.__openPageWatcherPickerConfig;
+  const forForm = typeof config?.token === 'string';
 
   const selected = [];
   const excluded = [];
@@ -24,15 +30,18 @@
         border: 1px solid #d1d5db; border-radius: 10px; padding: 10px 12px;
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); max-width: calc(100vw - 32px);
       }
-      button { font: inherit; border-radius: 6px; padding: 6px 12px; cursor: pointer; border: 1px solid #d1d5db; background: #fff; color: #111827; }
+      button { white-space: nowrap; font: inherit; border-radius: 6px; padding: 6px 12px; cursor: pointer; border: 1px solid #d1d5db; background: #fff; color: #111827; }
       button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
       button:disabled { opacity: 0.5; cursor: default; }
       .msg { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      label.keep { display: flex; gap: 4px; align-items: center; white-space: nowrap; cursor: pointer; }
+      label.keep[hidden] { display: none; }
     </style>
     <div class="box hover" hidden></div>
     <div class="sels"></div>
     <div class="bar">
       <span class="msg">Click parts to watch. Click inside a selection to leave part out. Enter saves, Esc cancels.</span>
+      <label class="keep" hidden><input type="checkbox" checked><span></span></label>
       <button class="primary save" disabled>Save (0)</button>
       <button class="cancel">Cancel</button>
     </div>`;
@@ -43,6 +52,8 @@
   const msg = root.querySelector('.msg');
   const saveBtn = root.querySelector('.save');
   const cancelBtn = root.querySelector('.cancel');
+  const keepLabel = root.querySelector('.keep');
+  const keepBox = keepLabel.querySelector('input');
   document.documentElement.appendChild(host);
 
   function place(box, el) {
@@ -61,8 +72,19 @@
       return b;
     };
     selBoxes.replaceChildren(...selected.map((el) => box(el, 'sel')), ...excluded.map((el) => box(el, 'exc')));
+    if (forForm) {
+      // Picking nothing here means watching the whole page.
+      const n = selected.length + (keepBox.checked ? kept.selectors.length : 0);
+      saveBtn.disabled = false;
+      saveBtn.textContent = n ? `Use ${n} part${n > 1 ? 's' : ''}${excluded.length ? `, ${excluded.length} left out` : ''}` : 'Use whole page';
+      return;
+    }
     saveBtn.disabled = selected.length === 0;
     saveBtn.textContent = excluded.length ? `Save (${selected.length}, ${excluded.length} left out)` : `Save (${selected.length})`;
+  }
+
+  function drop(list, test) {
+    for (let j = list.length - 1; j >= 0; j--) if (test(list[j])) list.splice(j, 1);
   }
 
   function isOurs(target) {
@@ -89,9 +111,6 @@
     e.stopImmediatePropagation();
     const el = e.target;
     if (!(el instanceof Element)) return;
-    const drop = (list, test) => {
-      for (let j = list.length - 1; j >= 0; j--) if (test(list[j])) list.splice(j, 1);
-    };
     if (excluded.includes(el)) {
       // Clicking an excluded part puts it back.
       drop(excluded, (x) => x === el);
@@ -123,7 +142,7 @@
     if (e.key === 'Escape') {
       e.preventDefault();
       cancel();
-    } else if (e.key === 'Enter' && selected.length && !saveBtn.disabled) {
+    } else if (e.key === 'Enter' && (selected.length || forForm) && !saveBtn.disabled) {
       e.preventDefault();
       save();
     }
@@ -176,14 +195,87 @@
     return best;
   }
 
+  // Parts chosen before, shown as already picked. Each element remembers the
+  // line it came from, so a line that's still fully picked is given back
+  // unchanged (keeping an XPath or an @attribute) rather than rewritten.
+  const groups = []; // { line, list, els }
+  const kept = { selectors: [], excludes: [] }; // lines that can't be shown here
+
+  function findAll(line) {
+    const expr = line.replace(/\s@[A-Za-z_:][\w:.-]*$/, '').trim();
+    try {
+      if (!expr.startsWith('xpath:')) return Array.from(document.querySelectorAll(expr));
+      const r = document.evaluate(expr.slice(6).trim(), document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+      const found = [];
+      for (let i = 0; i < r.snapshotLength; i++) {
+        const n = r.snapshotItem(i);
+        const e = n instanceof Element ? n : n?.parentElement;
+        if (e && !found.includes(e)) found.push(e);
+      }
+      return found;
+    } catch {
+      return [];
+    }
+  }
+
+  const shown = (e) => e.getClientRects().length > 0;
+
+  function preload() {
+    for (const line of config.selectors || []) {
+      const found = findAll(line).filter(shown);
+      const els = found.length <= 50 ? found.filter((e) => !selected.some((s) => s === e || s.contains(e))) : [];
+      if (!els.length) {
+        kept.selectors.push(line);
+        continue;
+      }
+      // A bigger part replaces smaller ones picked before it; their lines
+      // then aren't given back, since this one covers them.
+      drop(selected, (x) => els.some((e) => e.contains(x)));
+      selected.push(...els);
+      groups.push({ line, list: selected, els });
+    }
+    for (const line of config.excludes || []) {
+      const els = findAll(line).filter((e) => shown(e) && !excluded.includes(e) && selected.some((s) => s !== e && s.contains(e)));
+      if (!els.length) {
+        kept.excludes.push(line);
+        continue;
+      }
+      excluded.push(...els);
+      groups.push({ line, list: excluded, els });
+    }
+    const n = kept.selectors.length;
+    keepLabel.hidden = n === 0;
+    keepLabel.querySelector('span').textContent = `Keep ${n} part${n > 1 ? 's' : ''} not shown on this page`;
+    keepLabel.title = kept.selectors.join('\n');
+    keepBox.addEventListener('change', redraw);
+    msg.textContent = 'Click parts to add or remove them, or inside one to leave part out.';
+  }
+
+  function toLines(list) {
+    const lines = [];
+    const covered = new Set();
+    for (const g of groups) {
+      if (g.list === list && g.els.every((e) => list.includes(e))) {
+        lines.push(g.line);
+        g.els.forEach((e) => covered.add(e));
+      }
+    }
+    for (const e of list) if (!covered.has(e)) lines.push(selectorFor(e));
+    return [...new Set(lines)];
+  }
+
   async function save() {
     saveBtn.disabled = true;
     cancelBtn.disabled = true;
-    const selectors = selected.map(selectorFor);
-    const excludes = excluded.map(selectorFor);
+    const selectors = forForm ? [...toLines(selected), ...(keepBox.checked ? kept.selectors : [])] : selected.map(selectorFor);
+    const excludes = forForm ? [...toLines(excluded), ...kept.excludes] : excluded.map(selectorFor);
     try {
       const res = await chrome.runtime.sendMessage({ type: 'picker:save', selectors, excludes });
       if (!res?.ok) throw new Error(res?.error || 'Could not save');
+      if (res.form) {
+        msg.textContent = 'Done. Taking you back to the watch…';
+        return;
+      }
       msg.textContent = 'Saved. Open the extension to see this watch.';
       setTimeout(stop, 1800);
     } catch (e) {
@@ -218,7 +310,11 @@
   cancelBtn.addEventListener('click', (e) => e.isTrusted && cancel());
   // Lets the extension note which page the picker was started on; a save is
   // only accepted from that same page.
-  chrome.runtime.sendMessage({ type: 'picker:start' }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'picker:start', token: forForm ? config.token : undefined }).catch(() => {});
+  if (forForm) {
+    preload();
+    redraw();
+  }
   document.addEventListener('mousemove', onMove, true);
   document.addEventListener('click', onClick, true);
   for (const t of ['mousedown', 'mouseup', 'pointerdown', 'pointerup', 'submit']) document.addEventListener(t, block, true);
