@@ -28,6 +28,7 @@ let cookieSeen = null;
 let trackerHits = 0;
 let ssoHits = 0;
 let feedItems = ['Hello world', 'Second post'];
+let styled = '<p>Sale ends <span>Friday</span></p>';
 const server = http.createServer((req, res) => {
   if (req.url === '/product') {
     cookieSeen = req.headers.cookie || '';
@@ -88,6 +89,10 @@ const server = http.createServer((req, res) => {
       <p class="ad">Ad ${Date.now()}</p><a id="dl" href="/files/v${price.replace(/\D/g, '')}.zip" onclick="steal()">Download</a>
       <img src="/tracker.png" onerror="steal()"><form action="https://evil.example/"><input name="q"></form>
       <script>steal()</script></div>`);
+  }
+  if (req.url === '/styled') {
+    res.setHeader('content-type', 'text/html');
+    return res.end(`<!doctype html><title>Styled</title><div id="box">${styled}</div>`);
   }
   if (req.url === '/broken') {
     res.statusCode = 500;
@@ -336,6 +341,38 @@ try {
     stock = oldStock;
     price = oldPrice;
     await send({ type: 'deleteWatch', id });
+  });
+
+  await step('formatting changes count only when the watch asks for them', async () => {
+    const plain = (await send({ type: 'createWatch', watch: { url: `${base}/styled`, selectors: [{ type: 'css', expr: '#box' }] } })).id;
+    const id = (await send({ type: 'createWatch', watch: { url: `${base}/styled`, selectors: [{ type: 'css', expr: '#box' }], watchFormatting: true } })).id;
+    assert.equal((await watchOf(plain)).watchFormatting, false, 'off by default');
+    await waitFor(async () => (await history(id)).length === 1 && (await history(plain)).length === 1);
+    assert.equal((await history(plain))[0].format, undefined, 'formatting is not saved when it is off');
+    assert.equal((await history(id))[0].format, 'Sale ends Friday');
+    styled = '<h2>Sale ends <b style="color: Red">Friday</b></h2>';
+    await send({ type: 'checkNow', id: plain });
+    await send({ type: 'checkNow', id });
+    assert.equal((await history(plain)).length, 1, 'the text is the same');
+    const h = await history(id);
+    assert.equal(h.length, 2);
+    assert.equal(h[1].text, h[0].text);
+    assert.equal(h[1].format, '## Sale ends **{color: red}Friday{/color}**');
+    const w = await watchOf(id);
+    assert.equal(w.unread, true);
+    assert.equal(w.lastSummary, 'Formatting changed: heading, bold, color');
+    await page.evaluate((watchId) => { location.hash = `#/w/${watchId}`; }, id);
+    await page.waitForSelector('text=Only the formatting changed');
+    assert.match(await page.textContent('.diff'), /\*\*\{color: red\}Friday/);
+    await page.click('.tabs button[data-view="format"]');
+    await page.waitForSelector('.diff ins');
+    await page.click('.tabs button[data-view="text"]');
+    await page.evaluate((watchId) => { location.hash = `#/w/${watchId}/edit`; }, id);
+    await page.waitForSelector('text=Also watch formatting');
+    assert.equal(await page.isChecked('label.check:has-text("Also watch formatting") input'), true);
+    styled = '<p>Sale ends <span>Friday</span></p>';
+    await send({ type: 'deleteWatch', id });
+    await send({ type: 'deleteWatch', id: plain });
   });
 
   await step('several pages can be added at once and history downloads as CSV', async () => {

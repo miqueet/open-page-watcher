@@ -189,6 +189,9 @@ export function sanitizeWatch(input, existing = {}) {
     // Pause after the first alert, for one-off events like a restock.
     pauseAfterAlert: src.pauseAfterAlert === true,
     labels: cleanLabels(src.labels),
+    // Also count changes to formatting (bold, headings, links, colors...),
+    // not just the text.
+    watchFormatting: src.watchFormatting === true,
     ignore: {
       case: src.ignore?.case === true,
       whitespace: src.ignore?.whitespace === true,

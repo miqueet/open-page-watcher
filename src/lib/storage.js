@@ -2,7 +2,7 @@ import { cleanWindow } from './watch.js';
 
 // All persistent state lives in chrome.storage.local.
 //   watches            -> { [id]: watch }
-//   history:<id>       -> [{ t, text, html? }] oldest first
+//   history:<id>       -> [{ t, text, html?, format? }] oldest first
 //   log:<id>           -> [{ t, ok, changed, alerted, error, ms, via }] newest last
 //   settings           -> see DEFAULT_SETTINGS
 //

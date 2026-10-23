@@ -81,6 +81,10 @@ from any other proprietary extension.
   of the text
 - Ignore changes that are only dates, numbers, letter case, spacing or the
   order of lines, and ignore lines containing some text or matching a regex
+- Optionally (off by default) count formatting changes too: text turning bold
+  or italic, becoming a heading, list item or table cell, links pointing
+  somewhere else, and colors, sizes or hiding set in the page's own markup.
+  The Formatting tab shows what changed
 - Pause a watch after its first alert, for one-off events like a restock
 - Notifications that say what changed ("Went down from $1,299 to $1,199"),
   an optional sound (pick from six, with a preview), or the change read aloud

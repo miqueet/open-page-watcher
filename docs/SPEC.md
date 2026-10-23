@@ -47,6 +47,17 @@ Additions that Distill doesn't have as local features:
   tab to sign in, pause, or nothing)
 - A chart of the first number on the page over time
 - Opening the page with what changed highlighted (CSS Custom Highlight API)
+- Formatting changes, per watch and off by default ("Also watch formatting").
+  The extractor writes the text a second time with plain marks for headings,
+  list items, quotes, table cells, bold, italic, strikethrough, code, links
+  (with their address), underline, highlight, superscript/subscript, small/big,
+  hidden (`hidden`, `display:none`, `visibility:hidden`) and inline-style or
+  `<font>` colors, background colors and sizes. Stylesheets, class names and
+  computed styles are left out on purpose: sites rename classes and retheme
+  constantly, and a downloaded page has no styles applied, so they would mean
+  false alerts. Not used with the regex filter, attribute selectors (their
+  value is compared as is), PDFs, JSON or feeds. Versions saved before it was
+  turned on have no formatting and are never a formatting change
 - Organization policy through Chrome managed storage ([enterprise.md](enterprise.md))
 
 ## Deliberately left out

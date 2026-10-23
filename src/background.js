@@ -1,4 +1,5 @@
 import { extractText } from './lib/extract.js';
+import { formatChanged, summarizeFormat } from './lib/formatting.js';
 import { conditionMet, changedText } from './lib/conditions.js';
 import { selectJson, jsonValuesText } from './lib/jsonpath.js';
 import { highlightChanges, HIGHLIGHT_CSS } from './lib/highlight.js';
@@ -167,6 +168,7 @@ async function checkWatch(id, { via = 'schedule', tabId, scheduled = false } = {
         throw new Error('The watched text is over 2 million characters. Select part of the page instead.');
       }
       if (result.html && result.html.length > MAX_HTML_CHARS) delete result.html;
+      if (typeof result.format === 'string' && result.format.length > MAX_TEXT_CHARS) delete result.format;
       result.text = postProcess(result.text, watch);
     } catch (e) {
       error = e?.message || String(e);
@@ -237,8 +239,12 @@ async function record(watch, result, error, {
 
   const history = await getHistory(id);
   const previous = history[history.length - 1];
-  const changed = !previous
+  const textChanged = !previous
     || comparisonKey(previous.text, watch.ignore) !== comparisonKey(result.text, watch.ignore);
+  // Only the formatting changed (when the watch counts formatting).
+  const formatOnly = !textChanged && watch.watchFormatting
+    && formatChanged(previous.format, result.format, (f) => comparisonKey(f, watch.ignore));
+  const changed = textChanged || formatOnly;
   // The way the page is loaded just changed: this version is the new starting
   // point, not a change to alert about.
   const rebaseline = watch.rebaseline === true && Boolean(previous) && changed;
@@ -246,22 +252,31 @@ async function record(watch, result, error, {
   if (changed) {
     const entry = { t: now, text: result.text };
     if (result.html) entry.html = result.html;
+    if (typeof result.format === 'string') entry.format = result.format;
     await appendHistory(id, entry, watch.historyLimit);
     if (previous && !rebaseline) {
       logEntry.changed = true;
+      if (formatOnly) logEntry.note = 'Only the formatting changed';
       alert = conditionMet(watch.condition, previous.text, result.text, history.map((h) => h.text));
     }
-  } else if (result.html && !previous.html && previous.text === result.text) {
-    // Backfill the HTML of the current version so the visual view works.
+  } else if (previous.text === result.text && ((result.html && !previous.html)
+    || (typeof result.format === 'string' && typeof previous.format !== 'string'))) {
+    // Backfill the HTML of the current version so the visual view works, and
+    // its formatting so the next check has something to compare with.
     await serialize(async () => {
       const key = `history:${id}`;
       const h = (await chrome.storage.local.get(key))[key] || [];
-      if (h.length && h[h.length - 1].text === result.text) {
-        h[h.length - 1].html = result.html;
+      const last = h[h.length - 1];
+      if (last && last.text === result.text) {
+        if (result.html && !last.html) last.html = result.html;
+        if (typeof result.format === 'string' && typeof last.format !== 'string') last.format = result.format;
         await chrome.storage.local.set({ [key]: h });
       }
     });
   }
+  const summary = previous && changed && !rebaseline
+    ? (formatOnly ? summarizeFormat(previous.format, result.format) : summarizeChange(previous.text, result.text))
+    : '';
   logEntry.alerted = alert;
   if (alert && watch.pauseAfterAlert) logEntry.note = 'Paused after this alert (“Pause after the first alert” is on)';
   if (cookiesTurnedOn) logEntry.note = 'Turned on “Send my cookies” because the page asked you to sign in';
@@ -283,13 +298,13 @@ async function record(watch, result, error, {
     w.rebaseline = false;
     if (previous && changed && !rebaseline) {
       w.lastChangedAt = now;
-      w.lastSummary = summarizeChange(previous.text, result.text, 160);
+      w.lastSummary = summary.length > 160 ? summary.slice(0, 159) + '…' : summary;
     }
     if (alert) w.unread = true;
     if (alert && w.pauseAfterAlert) w.paused = true;
   });
   await appendLog(id, logEntry);
-  if (alert) await deliverAlert(watch, previous.text, result.text).catch((e) => console.warn('Alert failed', e));
+  if (alert) await deliverAlert(watch, summary).catch((e) => console.warn('Alert failed', e));
   await updateBadge();
   await broadcast({ type: 'changed', id });
 }
@@ -418,7 +433,10 @@ function startsWithPdfMagic(bytes) {
 // the user may have typed is read. expect: the main frame must still show
 // this page ({ url }) or site ({ origin }) when the extractor runs.
 function extractSpec(watch, baseUrl, { userTab = false, expect = null } = {}) {
-  return { selectors: watch.selectors, excludes: watch.excludes, baseUrl, captureHtml: true, userTab, expect };
+  // A regex filter keeps only bits of the text, so the formatting of the
+  // rest isn't compared.
+  const captureFormat = watch.watchFormatting === true && !watch.regexFilter;
+  return { selectors: watch.selectors, excludes: watch.excludes, baseUrl, captureHtml: true, captureFormat, userTab, expect };
 }
 
 async function readLimited(response, limit) {
@@ -489,10 +507,12 @@ async function extractInTab(tabId, watch, { userTab = false, expect = null } = {
   })) throw signInError();
   if (!found.length) throw new Error(main?.error || 'Could not read the page');
   const html = found.map((r) => r.html || '').join('');
-  return {
+  const result = {
     text: found.map((r) => r.text).filter(Boolean).join('\n'),
     html: html.length <= MAX_HTML_CHARS ? html : '',
   };
+  if (found.every((r) => typeof r.format === 'string')) result.format = found.map((r) => r.format).filter(Boolean).join('\n');
+  return result;
 }
 
 function waitForTabComplete(tabId) {
@@ -598,9 +618,8 @@ function ensureOffscreen() {
 // Alerts
 
 // Sends the alert now, or holds it for quiet hours or the combined summary.
-async function deliverAlert(watch, oldText, newText) {
+async function deliverAlert(watch, summary) {
   if (!watch.notify && !watch.sound && !watch.speak) return;
-  const summary = summarizeChange(oldText, newText);
   const now = Date.now();
   if (!shouldHold(await getSettings(), now)) {
     await notify([{ id: watch.id, name: watch.name, summary, t: now, count: 1, notify: watch.notify, sound: watch.sound, soundName: watch.soundName, speak: watch.speak }], now);
