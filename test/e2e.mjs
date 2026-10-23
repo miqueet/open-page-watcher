@@ -726,6 +726,36 @@ try {
     await send({ type: 'deleteWatch', id });
   });
 
+  await step('alert sound can be chosen, previewed and is played', async () => {
+    price = '$50';
+    const id = (await send({ type: 'createWatch', watch: { url: `${base}/product`, name: 'Sound', notify: false, sound: true, selectors: [{ type: 'css', expr: '#price' }] } })).id;
+    await waitFor(async () => (await history(id)).length === 1);
+    assert.equal((await watchOf(id)).soundName, 'chime');
+
+    await page.evaluate((x) => { location.hash = `#/w/${encodeURIComponent(x)}/edit`; }, id);
+    const choice = page.locator('select[aria-label="Sound"]');
+    await choice.waitFor();
+    await choice.selectOption('doorbell');
+    await page.click('button:text("Preview")');
+    await page.waitForTimeout(1300);
+    await page.click('button.primary:text("Save")');
+    await waitFor(async () => (await watchOf(id)).soundName === 'doorbell');
+
+    await sw.evaluate(() => {
+      self.beeps = [];
+      const send = chrome.runtime.sendMessage.bind(chrome.runtime);
+      chrome.runtime.sendMessage = (m, ...rest) => {
+        if (m?.type === 'beep') self.beeps.push(m.sound);
+        return send(m, ...rest);
+      };
+    });
+    price = '$55';
+    await send({ type: 'checkNow', id });
+    assert.deepEqual(await waitFor(() => sw.evaluate(() => self.beeps.length && self.beeps)), ['doorbell']);
+    await page.evaluate(() => { location.hash = '#/'; });
+    await send({ type: 'deleteWatch', id });
+  });
+
   await step('quick-fill presets, duplicate and keyboard navigation', async () => {
     await page.evaluate(() => { location.hash = '#/new'; });
     await page.click('.presets button:text("All links")');

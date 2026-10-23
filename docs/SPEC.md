@@ -19,7 +19,7 @@ code was copied, decompiled or consulted.
 | Ignore noise | Ignore dates, numbers, letter case or spacing when comparing |
 | Inbox / watchlist with unread state | Yes, with filters, search, labels, bulk actions and keyboard shortcuts |
 | Highlighted changes and history | Text, side-by-side, visual (sandboxed snapshot) and source views between any two saved versions |
-| Pop-up, sound and spoken alerts | Desktop notification with a plain summary of the change, sound, read aloud (on-device voices only), toolbar badge |
+| Pop-up, sound and spoken alerts | Desktop notification with a plain summary of the change, a choice of six built-in sounds (made locally, nothing downloaded), read aloud (on-device voices only), toolbar badge |
 | Error alerts and check log | Alert after N failed checks in a row, and a log of the last 50 checks per watch |
 | Feeds, PDFs, JSON | RSS/Atom and sitemaps one entry per line, PDF text, pretty-printed JSON |
 | Pause, check now, edit, duplicate, delete | Yes |

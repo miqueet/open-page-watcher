@@ -569,12 +569,12 @@ async function deliverAlert(watch, oldText, newText) {
   const summary = summarizeChange(oldText, newText);
   const now = Date.now();
   if (!shouldHold(await getSettings(), now)) {
-    await notify([{ id: watch.id, name: watch.name, summary, t: now, count: 1, notify: watch.notify, sound: watch.sound, speak: watch.speak }], now);
+    await notify([{ id: watch.id, name: watch.name, summary, t: now, count: 1, notify: watch.notify, sound: watch.sound, soundName: watch.soundName, speak: watch.speak }], now);
     return;
   }
   await serialize(async () => {
     const { pendingAlerts = [] } = await chrome.storage.local.get('pendingAlerts');
-    const alert = { id: watch.id, name: watch.name, summary, t: now, notify: watch.notify, sound: watch.sound, speak: watch.speak };
+    const alert = { id: watch.id, name: watch.name, summary, t: now, notify: watch.notify, sound: watch.sound, soundName: watch.soundName, speak: watch.speak };
     await chrome.storage.local.set({ pendingAlerts: queueAlert(pendingAlerts, alert) });
   });
   await flushAlerts(now);
@@ -609,9 +609,11 @@ async function notify(alerts, now) {
       priority: 1,
     });
   }
-  if (alerts.some((a) => a.sound)) {
+  // One sound per batch: the most recent alert's choice.
+  const sounding = alerts.filter((a) => a.sound).sort((a, b) => b.t - a.t);
+  if (sounding.length) {
     await ensureOffscreen();
-    await chrome.runtime.sendMessage({ target: 'offscreen', type: 'beep' }).catch(() => {});
+    await chrome.runtime.sendMessage({ target: 'offscreen', type: 'beep', sound: sounding[0].soundName }).catch(() => {});
   }
   const spoken = alerts.filter((a) => a.speak);
   if (spoken.length) {

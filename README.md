@@ -83,7 +83,7 @@ from any other proprietary extension.
   order of lines, and ignore lines containing some text or matching a regex
 - Pause a watch after its first alert, for one-off events like a restock
 - Notifications that say what changed ("Went down from $1,299 to $1,199"),
-  an optional sound, or the change read aloud
+  an optional sound (pick from six, with a preview), or the change read aloud
 - Quiet hours, and an option to combine alerts into one summary
 - An alert when a watch keeps failing
 
