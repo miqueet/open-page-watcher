@@ -36,7 +36,7 @@ approve for use at work. Open Page Watcher gives you the same core features
 without those trade-offs.
 
 This is a clean-room implementation written from scratch. It contains no code
-from Distill or any other proprietary extension.
+from any other proprietary extension.
 
 ## Features
 
