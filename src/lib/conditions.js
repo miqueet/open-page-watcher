@@ -15,6 +15,8 @@ export const RULE_TYPES = {
   regex: { label: 'Matches regex', value: 'regex' },
   notRegex: { label: "Doesn't match regex", value: 'regex' },
   neverSeen: { label: "Doesn't match any earlier version", value: false },
+  changedLinesAbove: { label: 'Lines changed is more than', value: 'number', size: true },
+  changedPctAbove: { label: 'Lines changed is more than %', value: 'number', size: true },
   numberBelow: { label: 'Number is less than', value: 'number', numeric: true },
   numberAbove: { label: 'Number is more than', value: 'number', numeric: true },
   numberIncreased: { label: 'Number increased', value: false, numeric: true },
@@ -78,6 +80,15 @@ export function changedText(oldText, newText) {
   return { added: added.filter(Boolean).join('\n'), deleted: deleted.filter(Boolean).join('\n') };
 }
 
+// How big a change is: lines added, removed or edited, and that count as a
+// percentage of the longer version's lines.
+export function changeSize(oldText, newText) {
+  let changed = 0;
+  for (const line of diffText(oldText, newText)) if (line.type !== 'eq') changed++;
+  const lines = Math.max(oldText ? oldText.split('\n').length : 0, newText ? newText.split('\n').length : 0, 1);
+  return { lines: changed, pct: (changed / lines) * 100 };
+}
+
 // Converts the v0.1 single condition ({ type, value }) into the rule-list form.
 export function normalizeCondition(condition) {
   if (condition && Array.isArray(condition.rules)) {
@@ -131,6 +142,8 @@ function ruleMet(rule, ctx) {
       return re.test(text) === (rule.type === 'regex');
     }
     case 'neverSeen': return !ctx.earlierTexts.includes(ctx.newText);
+    case 'changedLinesAbove': return ctx.size().lines > Number(value);
+    case 'changedPctAbove': return ctx.size().pct > Number(value);
     default: break;
   }
 
@@ -163,7 +176,9 @@ export function conditionMet(condition, oldText, newText, earlierTexts = [oldTex
   const { match, rules } = normalizeCondition(condition);
   if (rules.length === 0) return true;
   let diff;
+  let size;
   const ctx = {
+    size: () => (size ||= changeSize(oldText, newText)),
     oldText,
     newText,
     earlierTexts,

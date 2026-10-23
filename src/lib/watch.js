@@ -1,4 +1,5 @@
 import { normalizeCondition } from './conditions.js';
+import { parseJsonPath } from './jsonpath.js';
 
 export const MIN_INTERVAL_MINUTES = 1;
 export const MAX_INTERVAL_MINUTES = 7 * 24 * 60;
@@ -57,11 +58,41 @@ function cleanSelectors(list, { allowAttr }) {
     .filter((s) => s && typeof s.expr === 'string' && s.expr.trim())
     .slice(0, SELECTOR_LIMIT)
     .map((s) => {
-      const out = { type: s.type === 'xpath' ? 'xpath' : 'css', expr: str(s.expr).trim() };
+      const type = s.type === 'xpath' || (allowAttr && s.type === 'json') ? s.type : 'css';
+      const out = { type, expr: str(s.expr).trim() };
+      if (type === 'json') {
+        parseJsonPath(out.expr); // throws a readable error if the path is invalid
+        return out;
+      }
       // Attribute or property to read instead of text, e.g. href or src.
       if (allowAttr && typeof s.attr === 'string' && /^[A-Za-z_:][\w:.-]{0,63}$/.test(s.attr)) out.attr = s.attr;
       return out;
     });
+}
+
+// "Ignore lines" entries: plain text (matched anywhere in a line, any case)
+// or /regular expression/flags.
+export function ignoreLineMatcher(entry) {
+  const m = /^\/(.+)\/([imsu]*)$/.exec(entry);
+  if (m) {
+    const re = new RegExp(m[1], m[2]);
+    return (line) => re.test(line);
+  }
+  const needle = entry.toLowerCase();
+  return (line) => line.toLowerCase().includes(needle);
+}
+
+function cleanIgnoreLines(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const l of list) {
+    if (typeof l !== 'string' || !l.trim()) continue;
+    const entry = l.trim().slice(0, 500);
+    ignoreLineMatcher(entry); // throws a readable SyntaxError if invalid
+    out.push(entry);
+    if (out.length >= 50) break;
+  }
+  return out;
 }
 
 function cleanTime(value, fallback) {
@@ -116,6 +147,13 @@ export function sanitizeWatch(input, existing = {}) {
     if (rule.type === 'regex' || rule.type === 'notRegex') new RegExp(rule.value);
   }
   const schedule = cleanSchedule(src);
+  const selectors = cleanSelectors(src.selectors, { allowAttr: true });
+  // JSON paths read the downloaded JSON itself, so they can't be mixed with
+  // page selectors or used where the page is rendered in a tab.
+  if (selectors.some((s) => s.type === 'json')) {
+    if (selectors.some((s) => s.type !== 'json')) throw new Error("JSON paths can't be mixed with CSS or XPath selectors");
+    if (src.mode === 'tab' || src.live === true) throw new Error('JSON paths only work when the page is downloaded, not opened in a tab');
+  }
   const intervalMinutes = clampInt(src.intervalMinutes, MIN_INTERVAL_MINUTES, MAX_INTERVAL_MINUTES, DEFAULT_INTERVAL_MINUTES);
   if (schedule.randomMaxMinutes < intervalMinutes) schedule.randomMaxMinutes = intervalMinutes;
 
@@ -123,7 +161,7 @@ export function sanitizeWatch(input, existing = {}) {
     id: typeof src.id === 'string' && /^[a-z0-9-]{1,64}$/i.test(src.id) ? src.id : crypto.randomUUID(),
     name: str(src.name).trim() || new URL(url).hostname,
     url,
-    selectors: cleanSelectors(src.selectors, { allowAttr: true }),
+    selectors,
     excludes: cleanSelectors(src.excludes, { allowAttr: false }),
     regexFilter,
     mode: src.mode === 'tab' ? 'tab' : 'fetch',
@@ -146,12 +184,16 @@ export function sanitizeWatch(input, existing = {}) {
     sound: src.sound === true,
     speak: src.speak === true,
     paused: src.paused === true,
+    // Pause after the first alert, for one-off events like a restock.
+    pauseAfterAlert: src.pauseAfterAlert === true,
     labels: cleanLabels(src.labels),
     ignore: {
       case: src.ignore?.case === true,
       whitespace: src.ignore?.whitespace === true,
       numbers: src.ignore?.numbers === true,
       dates: src.ignore?.dates === true,
+      order: src.ignore?.order === true,
+      lines: cleanIgnoreLines(src.ignore?.lines),
     },
     // Runtime state (preserved from existing, never trusted from imports).
     createdAt: Number(existing.createdAt) || Date.now(),
@@ -210,6 +252,11 @@ const DATE_PATTERNS = [
 // "ignore" options. The stored history keeps the real text.
 export function comparisonKey(text, ignore = {}) {
   let t = text;
+  if (ignore.lines?.length) {
+    const matchers = ignore.lines.map(ignoreLineMatcher);
+    t = t.split('\n').filter((line) => !matchers.some((m) => m(line))).join('\n');
+  }
+  if (ignore.order) t = t.split('\n').sort().join('\n');
   if (ignore.dates) for (const re of DATE_PATTERNS) t = t.replace(re, '<date>');
   if (ignore.numbers) t = t.replace(/\d[\d,.]*/g, '<n>');
   if (ignore.whitespace) t = t.replace(/\s+/g, ' ').trim();

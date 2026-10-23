@@ -25,6 +25,20 @@ code was copied, decompiled or consulted.
 | Pause, check now, edit, duplicate, delete | Yes |
 | Import / export | JSON, optionally password protected |
 
+Features from other popular monitors (Visualping, Page Monitor,
+changedetection.io), from their public listings and documentation:
+
+| Feature | Seen in | Open Page Watcher |
+| --- | --- | --- |
+| Only alert when enough changed | Visualping (sensitivity), changedetection.io | "Lines changed is more than" a count or a percentage, as alert rules |
+| Watch values in a JSON API | changedetection.io (JSONPath) | `json:` paths: names, `[n]`, `[*]` and `['key']`. No filters or scripts |
+| Ignore lines containing text | changedetection.io | Plain text (any case) or `/regex/`, per watch |
+| Ignore line order | changedetection.io (sort lines) | Yes |
+| Stop after a change | Visualping | "Pause after the first alert" |
+| Add many pages at once | Distill, Visualping, changedetection.io | "Add several": a list of addresses with shared labels and schedule |
+| Export change history | Distill, Visualping | Download a watch's versions as CSV (cells that a spreadsheet would run as formulas are escaped) |
+| Highlighted, visual and text comparisons | All of them | Yes (see above) |
+
 Additions that Distill doesn't have as local features:
 
 - Quiet hours, and combining alerts into one summary notification
@@ -51,6 +65,13 @@ These run on the device but were left out as security trade-offs:
   signed-in user on the page
 - Custom JavaScript selectors and conditions, because they would mean running
   user-supplied code with the extension's privileges
+- Screenshot (pixel) comparison, as in Visualping: capturing tabs needs access
+  to every site (`<all_urls>`). The sandboxed visual view covers the use case
+- Proxies, custom request headers and POST requests: headers would mean
+  storing tokens next to the watches, and proxies send pages through a third
+  party
+- Crawling a whole site for new pages: it would need access to more than the
+  pages the user picked
 
 ## Security model
 
@@ -151,6 +172,8 @@ These run on the device but were left out as security trade-offs:
 - `src/lib/feeds.js`: RSS, Atom and sitemap reading.
 - `src/lib/diff.js`: Myers diff (lines, then words).
 - `src/lib/conditions.js`: alert rules.
+- `src/lib/jsonpath.js`: the JSON path subset (parsed, never evaluated).
+- `src/lib/csv.js`: CSV export of saved versions.
 - `src/lib/alerts.js`: change summaries, quiet hours and combined alerts.
 - `src/lib/policy.js`: organization policy.
 - `src/lib/signin.js`: spotting sign-in pages.

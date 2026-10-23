@@ -72,3 +72,17 @@ test('changedText keeps multi-word changes together and splits separate ones', a
   assert.deepEqual(changedText('In stock', 'Only 3 left'), { added: 'Only 3 left', deleted: 'In stock' });
   assert.deepEqual(changedText('Price is 10 dollars today', 'Price is 12 dollars now'), { added: '12\nnow', deleted: '10\ntoday' });
 });
+
+test('change size rules', async () => {
+  const { changeSize } = await import('../src/lib/conditions.js');
+  const old = 'a\nb\nc\nd\ne\nf\ng\nh\ni\nj';
+  const small = old.replace('c', 'C');
+  const big = 'A\nB\nC\nD\ne\nf\ng\nh\ni\nj';
+  assert.deepEqual(changeSize(old, small), { lines: 1, pct: 10 });
+  const pct = { match: 'all', rules: [{ type: 'changedPctAbove', value: '20', on: 'text' }] };
+  assert.equal(conditionMet(pct, old, small), false);
+  assert.equal(conditionMet(pct, old, big), true);
+  const lines = { match: 'all', rules: [{ type: 'changedLinesAbove', value: '1', on: 'text' }] };
+  assert.equal(conditionMet(lines, old, small), false);
+  assert.equal(conditionMet(lines, old, big), true);
+});

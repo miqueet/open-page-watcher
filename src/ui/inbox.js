@@ -9,6 +9,7 @@ import { visualDocument, sourceLines } from './visual.js';
 import { numberSeries, numberChart } from './chart.js';
 import { encryptBackup, decryptBackup, isEncrypted } from '../lib/backup.js';
 import { getPolicy, isManaged, checkSiteAllowed } from '../lib/policy.js';
+import { historyCsv } from '../lib/csv.js';
 import { SIGN_IN_MESSAGE } from '../lib/signin.js';
 
 const $ = (id) => document.getElementById(id);
@@ -31,12 +32,12 @@ try {
 }
 
 // ---------------------------------------------------------------------------
-// Routing: #/w/<id>, #/w/<id>/edit, #/new, #/settings
+// Routing: #/w/<id>, #/w/<id>/edit, #/new, #/new-many, #/settings
 
 function route() {
-  const m = /^#\/(?:w\/([^/]+)(\/edit)?|(new)|(settings))$/.exec(location.hash);
-  if (!m) return { id: null, edit: false, isNew: false, settings: false };
-  return { id: m[1] ? decodeURIComponent(m[1]) : null, edit: !!m[2], isNew: !!m[3], settings: !!m[4] };
+  const m = /^#\/(?:w\/([^/]+)(\/edit)?|(new)|(settings)|(new-many))$/.exec(location.hash);
+  if (!m) return { id: null, edit: false, isNew: false, settings: false, isNewMany: false };
+  return { id: m[1] ? decodeURIComponent(m[1]) : null, edit: !!m[2], isNew: !!m[3], settings: !!m[4], isNewMany: !!m[5] };
 }
 
 function go(hash) {
@@ -201,10 +202,11 @@ function scriptsNeededBanner(watch) {
 }
 
 async function renderDetail() {
-  const { id, edit, isNew, settings } = route();
+  const { id, edit, isNew, settings, isNewMany } = route();
   const detail = $('detail');
   if (settings) return detail.replaceChildren(await settingsForm());
   if (isNew) return detail.replaceChildren(watchForm(null));
+  if (isNewMany) return detail.replaceChildren(addManyForm());
   const watch = state.watches.find((w) => w.id === id);
   if (!watch) {
     return detail.replaceChildren(el('p', { class: 'empty-detail' },
@@ -289,6 +291,15 @@ async function renderDetail() {
       }, 'Duplicate'),
       el('button', { onclick: () => call('bulk', { ids: [id], action: watch.paused ? 'resume' : 'pause' }) }, watch.paused ? 'Resume' : 'Pause'),
       el('button', { onclick: () => call('setRead', { id, read: false }) }, 'Mark unread'),
+      el('button', {
+        title: 'Save every kept version to a spreadsheet file (CSV), with the first number in each',
+        disabled: history.length === 0,
+        onclick: () => {
+          const day = new Date().toISOString().slice(0, 10);
+          const name = `${watch.name.replace(/[^\w.-]+/g, '-').slice(0, 60) || 'watch'}-${day}.csv`;
+          saveFile(new Blob([historyCsv(history)], { type: 'text/csv' }), name);
+        },
+      }, 'Download CSV'),
       el('button', {
         class: 'danger',
         onclick: async () => {
@@ -542,13 +553,16 @@ function intervalSlider(every, unit, minMinutes) {
     el('div', { class: 'slider-ends hint' }, el('span', {}, label(steps[0])), el('span', {}, label(steps[steps.length - 1]))));
 }
 
-// Selector lines: "css selector", "xpath://expr", optionally ending in " @attr".
+// Selector lines: "css selector", "xpath://expr" or "json:$.path", optionally
+// ending in " @attr".
 function selectorsToText(selectors) {
-  return selectors.map((s) => (s.type === 'xpath' ? `xpath:${s.expr}` : s.expr) + (s.attr ? ` @${s.attr}` : '')).join('\n');
+  const prefix = { xpath: 'xpath:', json: 'json:' };
+  return selectors.map((s) => (prefix[s.type] || '') + s.expr + (s.attr ? ` @${s.attr}` : '')).join('\n');
 }
 
 function textToSelectors(text) {
   return text.split('\n').map((l) => l.trim()).filter(Boolean).map((line) => {
+    if (line.startsWith('json:')) return { type: 'json', expr: line.slice(5).trim() };
     let attr;
     const m = /\s@([A-Za-z_:][\w:.-]*)$/.exec(line);
     if (m) {
@@ -579,7 +593,7 @@ function ruleRow(rule, onRemove) {
     value.hidden = !kind;
     value.type = kind === 'number' ? 'number' : 'text';
     value.placeholder = kind === 'regex' ? 'regular expression' : kind === 'number' ? 'number' : 'text';
-    on.disabled = /^number(In|De)creased/.test(type.value) || type.value === 'neverSeen';
+    on.disabled = /^number(In|De)creased/.test(type.value) || type.value === 'neverSeen' || RULE_TYPES[type.value].size === true;
   };
   type.addEventListener('change', sync);
   sync();
@@ -645,8 +659,11 @@ function watchForm(watch) {
     sound: el('input', { type: 'checkbox', checked: w.sound }),
     speak: el('input', { type: 'checkbox', checked: w.speak === true }),
     historyLimit: el('input', { type: 'number', min: 2, max: 200, value: String(w.historyLimit) }),
-    ignore: Object.fromEntries(['dates', 'numbers', 'case', 'whitespace'].map((k) => [k, el('input', { type: 'checkbox', checked: w.ignore?.[k] === true })])),
+    ignore: Object.fromEntries(['dates', 'numbers', 'case', 'whitespace', 'order'].map((k) => [k, el('input', { type: 'checkbox', checked: w.ignore?.[k] === true })])),
+    ignoreLines: el('textarea', { rows: 2, placeholder: 'Last updated\n/^Visitors: \\d+$/' }),
+    pauseAfterAlert: el('input', { type: 'checkbox', checked: w.pauseAfterAlert === true }),
   };
+  f.ignoreLines.value = (w.ignore?.lines || []).join('\n');
   const policy = state.policy;
   if (policy?.disableRenderInTab || policy?.disableCookies) f.mode.querySelector('option[value="tab"]').disabled = true;
   if (policy?.disableLiveMode) f.live.disabled = true;
@@ -824,7 +841,11 @@ function watchForm(watch) {
         sound: f.sound.checked,
         speak: f.speak.checked,
         historyLimit: Number(f.historyLimit.value),
-        ignore: Object.fromEntries(Object.entries(f.ignore).map(([k, box]) => [k, box.checked])),
+        ignore: {
+          ...Object.fromEntries(Object.entries(f.ignore).map(([k, box]) => [k, box.checked])),
+          lines: f.ignoreLines.value.split('\n').map((l) => l.trim()).filter(Boolean),
+        },
+        pauseAfterAlert: f.pauseAfterAlert.checked,
       };
       try {
         const { id } = await call(watch ? 'updateWatch' : 'createWatch', { watch: data });
@@ -857,7 +878,7 @@ function watchForm(watch) {
         },
       }, label))),
     el('label', { class: 'field' }, el('span', {}, 'Parts of the page (leave empty for the whole page)'), f.selectors,
-      el('span', { class: 'hint' }, 'One CSS selector per line. Start a line with xpath: for XPath. End a line with @href, @src or another attribute name to watch that attribute instead of the text. Pick on page fills this in for you.')),
+      el('span', { class: 'hint' }, 'One CSS selector per line. Start a line with xpath: for XPath, or json: for a path in a JSON response such as json:$.items[*].price. End a line with @href, @src or another attribute name to watch that attribute instead of the text. Pick on page fills this in for you.')),
     el('label', { class: 'field' }, el('span', {}, 'Leave out'), f.excludes,
       el('span', { class: 'hint' }, 'Selectors for parts to ignore, such as ads or timestamps.')),
     el('label', { class: 'field' }, el('span', {}, 'Keep only text matching this regular expression'), f.regexFilter),
@@ -866,7 +887,10 @@ function watchForm(watch) {
         el('label', {}, f.ignore.dates, 'Dates and times'),
         el('label', {}, f.ignore.numbers, 'Numbers'),
         el('label', {}, f.ignore.case, 'Upper/lower case'),
-        el('label', {}, f.ignore.whitespace, 'Spacing')))),
+        el('label', {}, f.ignore.whitespace, 'Spacing'),
+        el('label', {}, f.ignore.order, 'Order of lines'))),
+    el('label', { class: 'field' }, el('span', {}, 'Ignore lines containing'), f.ignoreLines,
+      el('span', { class: 'hint' }, 'One per line, any case. Write /pattern/ for a regular expression. Matching lines still show in the history but never count as a change on their own.'))),
   el('fieldset', {}, el('legend', {}, 'When to check'),
     el('div', { class: 'inline' }, f.scheduleType, f.every, f.unit, randomRow),
     sliderRow,
@@ -896,6 +920,8 @@ function watchForm(watch) {
     }, '+ Add rule')),
     el('label', { class: 'check' }, f.notify, el('span', {}, 'Desktop notification')),
     el('label', { class: 'check' }, f.sound, el('span', {}, 'Play a sound')),
+    el('label', { class: 'check' }, f.pauseAfterAlert, el('span', {}, 'Pause after the first alert',
+      el('div', { class: 'hint' }, 'For one-off events, like a restock or a results page going up. Resume it any time.'))),
     el('label', { class: 'check' }, f.speak, el('span', {}, 'Read the change aloud',
       el('div', { class: 'hint' }, 'Only voices installed on this computer are used, never online voices.'))),
     el('label', { class: 'field' }, el('span', {}, 'Versions to keep'), f.historyLimit)),
@@ -912,6 +938,69 @@ function watchForm(watch) {
       },
     }, 'Cancel')));
   return form;
+}
+
+// Adds a list of addresses at once, all watched as whole pages with the same
+// schedule. Each can be edited afterwards.
+function addManyForm() {
+  const policy = state.policy;
+  const [n, unit] = intervalParts(Math.max(DEFAULT_INTERVAL_MINUTES, policy?.minIntervalMinutes || 0));
+  const f = {
+    urls: el('textarea', { rows: 8, required: true, placeholder: 'https://example.com/pricing\nhttps://example.org/status' }),
+    labels: el('input', { placeholder: 'e.g. work, prices' }),
+    every: el('input', { type: 'number', min: 1, value: String(n), required: true }),
+    unit: unitSelect(unit),
+    notify: el('input', { type: 'checkbox', checked: true }),
+  };
+  const error = el('p', { class: 'error', hidden: true });
+  const fail = (text) => {
+    error.hidden = false;
+    error.textContent = text;
+  };
+  return el('form', {
+    onsubmit: async (e) => {
+      e.preventDefault();
+      error.hidden = true;
+      const urls = [...new Set(f.urls.value.split('\n').map((l) => l.trim()).filter(Boolean))];
+      if (!urls.length) return fail('Enter at least one address.');
+      if (urls.length > 200) return fail('Add at most 200 pages at a time.');
+      // Check every address and the organization's rules before asking
+      // Chrome for access, so access is never granted to a site that can't be watched.
+      for (const url of urls) {
+        if (!isHttpUrl(url)) return fail(`“${url}” isn’t a full http:// or https:// address.`);
+        try {
+          if (policy) checkSiteAllowed(policy, url);
+        } catch (err) {
+          return fail(`${url}: ${err.message}`);
+        }
+      }
+      // One prompt for all the sites, while we still have the click's user gesture.
+      const granted = await requestAccess(urls).catch(() => false);
+      const labels = f.labels.value.split(',').map((l) => l.trim()).filter(Boolean);
+      const intervalMinutes = Number(f.every.value) * Number(f.unit.value);
+      try {
+        const { ids } = await call('createWatches', {
+          watches: urls.map((url) => ({ url, labels, intervalMinutes, notify: f.notify.checked })),
+        });
+        toast(granted ? `Added ${ids.length} watch${ids.length === 1 ? '' : 'es'}.`
+          : `Added ${ids.length}. Site access was not granted, so checks will fail until you allow it.`);
+        go('#/');
+      } catch (err) {
+        fail(err.message);
+        if (granted) call('releaseUnusedAccess').catch(() => {});
+      }
+    },
+  },
+  el('h1', {}, 'Add several pages'),
+  el('label', { class: 'field' }, el('span', {}, 'Page addresses, one per line'), f.urls,
+    el('span', { class: 'hint' }, 'Each page is watched in full. Open a watch afterwards to pick parts of the page or add alert rules.')),
+  el('label', { class: 'field' }, el('span', {}, 'Labels'), f.labels, el('span', { class: 'hint' }, 'Separate labels with commas.')),
+  el('div', { class: 'field' }, el('span', {}, 'Check every'), el('div', { class: 'inline' }, f.every, f.unit)),
+  el('label', { class: 'check' }, f.notify, el('span', {}, 'Desktop notification')),
+  error,
+  el('div', { class: 'row' },
+    el('button', { class: 'primary', type: 'submit' }, 'Add watches'),
+    el('button', { type: 'button', onclick: () => go('#/') }, 'Cancel')));
 }
 
 // ---------------------------------------------------------------------------
@@ -1004,6 +1093,7 @@ function toast(text) {
 }
 
 $('add').addEventListener('click', () => go('#/new'));
+$('add-many').addEventListener('click', () => go('#/new-many'));
 $('settings').addEventListener('click', () => go('#/settings'));
 $('mark-all').addEventListener('click', () => call('markAllRead'));
 $('search').addEventListener('input', (e) => {
@@ -1038,11 +1128,14 @@ function dialog(title, body, confirmLabel) {
   });
 }
 
-function download(data, name) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+function saveFile(blob, name) {
   const a = el('a', { href: URL.createObjectURL(blob), download: name });
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+function download(data, name) {
+  saveFile(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), name);
 }
 
 $('export').addEventListener('click', async () => {

@@ -45,6 +45,8 @@ from any other proprietary extension.
   click inside a selection to leave parts out (ads, timestamps)
 - CSS and XPath selectors, attributes such as `@href`, and an optional regex to
   keep only matching text
+- JSON paths such as `json:$.items[*].price` to watch just some values of a
+  JSON API response
 - Quick fills for all links, the page title, headings or the description
 - Web pages, JSON, plain text, PDF files, RSS/Atom feeds and XML sitemaps
 - Pages that need JavaScript can be rendered in a hidden window, including
@@ -56,6 +58,7 @@ from any other proprietary extension.
 - Right-click any page or link to watch it, or press Alt+Shift+W to pick parts
 
 **When to check**
+- Add a whole list of addresses at once with the same schedule and labels
 - Every minute up to every 7 days (drag a slider or type an exact value), or at
   a random time within a range
 - Only during certain hours and days
@@ -74,7 +77,11 @@ from any other proprietary extension.
   matches a regex, length, never seen before, number above or below, and number
   up or down by an amount or a percentage, checked on the new, added, removed or
   previous text
-- Ignore changes that are only dates, numbers, letter case or spacing
+- Alert only on bigger changes: more than a number of lines, or a percentage
+  of the text
+- Ignore changes that are only dates, numbers, letter case, spacing or the
+  order of lines, and ignore lines containing some text or matching a regex
+- Pause a watch after its first alert, for one-off events like a restock
 - Notifications that say what changed ("Went down from $1,299 to $1,199"),
   an optional sound, or the change read aloud
 - Quiet hours, and an option to combine alerts into one summary
@@ -87,13 +94,15 @@ from any other proprietary extension.
 - A chart of the number on the page over time
 - Open the page with what changed highlighted
 - A log of recent checks for each watch
+- Download every saved version of a watch as a CSV file for a spreadsheet
 
 **Keeping control**
 - Password-protected backups (AES-256-GCM), plus plain JSON import and export
 - IT teams can limit sites, intervals and options through Chrome policy (see
   [docs/enterprise.md](docs/enterprise.md))
 
-See [docs/SPEC.md](docs/SPEC.md) for how this maps to Distill's features, what is
+See [docs/SPEC.md](docs/SPEC.md) for how this maps to Distill's and other
+monitors' features, what is
 deliberately left out, and the full security model.
 
 ## Install
