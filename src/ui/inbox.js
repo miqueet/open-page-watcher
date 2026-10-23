@@ -22,6 +22,7 @@ const state = {
   view: 'text', // text | side | visual | source
   showDeleted: false,
   policy: null, // organization policy from managed storage
+  picking: null, // token of a "Pick on page" the open form is waiting for
 };
 
 try {
@@ -44,7 +45,10 @@ function go(hash) {
   else location.hash = hash;
 }
 
-window.addEventListener('hashchange', render);
+window.addEventListener('hashchange', () => {
+  state.picking = null; // a form waiting for picks is gone
+  render();
+});
 
 // ---------------------------------------------------------------------------
 // List
@@ -722,10 +726,68 @@ function watchForm(watch) {
   sync();
 
   const error = el('p', { class: 'error', hidden: true });
+  const showError = (text) => {
+    error.hidden = false;
+    error.textContent = text;
+  };
+
+  // "Pick on page": opens the page in a new tab with the same picker used to
+  // create watches, showing the parts already chosen. What's picked there
+  // fills in the two fields below; it's saved with the form's Save button.
+  const pickLabel = watch?.selectors?.length ? 'Reselect on page' : 'Pick on page';
+  const pickBtn = el('button', {
+    type: 'button',
+    class: 'pick',
+    title: 'Opens the page so you can click the parts to watch, with the parts chosen now highlighted',
+    onclick: async () => {
+      if (state.picking) return stopPicking();
+      error.hidden = true;
+      const url = f.url.value.trim();
+      try {
+        if (!isHttpUrl(url)) throw new Error('Enter the page address first, starting with http:// or https://.');
+        if (policy) checkSiteAllowed(policy, url);
+      } catch (err) {
+        return showError(err.message);
+      }
+      // Asked here, while there's still the click's user gesture.
+      const granted = await requestAccess([url]).catch(() => false);
+      if (!granted) return showError('Allow access to the site to pick parts on it.');
+      const token = crypto.randomUUID();
+      state.picking = token;
+      pickBtn.textContent = 'Waiting for your picks… (click to stop)';
+      try {
+        await call('pickForForm', { url, token, selectors: f.selectors.value.split('\n'), excludes: f.excludes.value.split('\n') });
+      } catch (err) {
+        stopPicking();
+        showError(err.message);
+      }
+    },
+  }, pickLabel);
+  function stopPicking() {
+    state.picking = null;
+    pickBtn.textContent = pickLabel;
+  }
+  const onPick = (message, sender) => {
+    if (!form.isConnected) {
+      chrome.runtime.onMessage.removeListener(onPick);
+      return;
+    }
+    if (sender.id !== chrome.runtime.id || message?.target !== 'ui' || !state.picking || message.token !== state.picking) return;
+    stopPicking();
+    if (message.type !== 'picked') return;
+    f.selectors.value = message.selectors.join('\n');
+    f.excludes.value = message.excludes.join('\n');
+    f.selectors.focus();
+    f.selectors.scrollIntoView({ block: 'center' });
+    const n = message.selectors.length;
+    toast(`${n ? `Picked ${n} part${n > 1 ? 's' : ''}` : 'Watching the whole page'}. Click ${watch ? 'Save' : 'Add watch'} to keep it.`);
+  };
+  chrome.runtime.onMessage.addListener(onPick);
 
   const form = el('form', {
     onsubmit: async (e) => {
       e.preventDefault();
+      stopPicking();
       error.hidden = true;
       const url = f.url.value.trim();
       // Check the organization's rules before asking Chrome for access, so
@@ -804,6 +866,8 @@ function watchForm(watch) {
   el('label', { class: 'field' }, el('span', {}, 'Name'), f.name),
   el('label', { class: 'field' }, el('span', {}, 'Labels'), f.labels, el('span', { class: 'hint' }, 'Separate labels with commas.')),
   el('fieldset', {}, el('legend', {}, 'What to watch'),
+    el('div', { class: 'pick-row' }, pickBtn,
+      el('span', { class: 'hint' }, 'Click the parts on the live page, with the same highlighter used when adding a watch.')),
     el('div', { class: 'presets' }, el('span', { class: 'hint' }, 'Quick fill:'),
       ...PRESETS.map(([label, text, hint]) => el('button', {
         type: 'button',
@@ -814,7 +878,7 @@ function watchForm(watch) {
         },
       }, label))),
     el('label', { class: 'field' }, el('span', {}, 'Parts of the page (leave empty for the whole page)'), f.selectors,
-      el('span', { class: 'hint' }, 'One CSS selector per line. Start a line with xpath: for XPath, or json: for a path in a JSON response such as json:$.items[*].price. End a line with @href, @src or another attribute name to watch that attribute instead of the text. The "Select parts of page" button in the toolbar popup fills this in for you.')),
+      el('span', { class: 'hint' }, 'One CSS selector per line. Start a line with xpath: for XPath, or json: for a path in a JSON response such as json:$.items[*].price. End a line with @href, @src or another attribute name to watch that attribute instead of the text. Pick on page fills this in for you.')),
     el('label', { class: 'field' }, el('span', {}, 'Leave out'), f.excludes,
       el('span', { class: 'hint' }, 'Selectors for parts to ignore, such as ads or timestamps.')),
     el('label', { class: 'field' }, el('span', {}, 'Keep only text matching this regular expression'), f.regexFilter),
@@ -864,7 +928,15 @@ function watchForm(watch) {
   error,
   el('div', { class: 'row' },
     el('button', { class: 'primary', type: 'submit' }, watch ? 'Save' : 'Add watch'),
-    el('button', { type: 'button', onclick: () => go(watch ? `#/w/${encodeURIComponent(watch.id)}` : '#/') }, 'Cancel')));
+    el('button', {
+      type: 'button',
+      onclick: () => {
+        stopPicking();
+        // Gives back access asked for by "Pick on page" if nothing ends up using it.
+        call('releaseUnusedAccess').catch(() => {});
+        go(watch ? `#/w/${encodeURIComponent(watch.id)}` : '#/');
+      },
+    }, 'Cancel')));
   return form;
 }
 
@@ -1170,7 +1242,7 @@ function render() {
   renderList();
   // Don't wipe a form the user is typing in.
   const { edit, isNew, settings } = route();
-  if ((edit || isNew || settings) && $('detail').querySelector('form') && document.activeElement?.closest('form')) return;
+  if ((edit || isNew || settings) && $('detail').querySelector('form') && (state.picking || document.activeElement?.closest('form'))) return;
   renderDetail();
 }
 
@@ -1178,7 +1250,8 @@ chrome.storage.onChanged.addListener((_, area) => {
   if (area === 'managed') refresh();
 });
 
-onChanged(() => {
+onChanged((message) => {
+  if (message.type === 'picked' || message.type === 'pickCancelled') return; // for the open form only
   if (renderQueued) return;
   renderQueued = true;
   setTimeout(() => {
