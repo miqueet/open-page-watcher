@@ -160,6 +160,42 @@ $('bulk-action').addEventListener('change', async (e) => {
 // ---------------------------------------------------------------------------
 // Detail
 
+// Downloading the page only gave a placeholder: offers the ways to read it,
+// each one only for this watch.
+function scriptsNeededBanner(watch) {
+  const { id } = watch;
+  const policy = state.policy;
+  const renderOk = !policy?.disableRenderInTab && !policy?.disableCookies;
+  const cookiesOk = !watch.sendCookies && !policy?.disableCookies;
+  const choose = (how, done) => async (e) => {
+    for (const b of e.target.parentElement.querySelectorAll('button')) b.disabled = true;
+    try {
+      await call('changeLoading', { id, how });
+      toast(done);
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+  return el('div', { class: 'banner' },
+    el('span', {},
+      el('div', {}, watch.lastError || 'This page only shows its content once its scripts run.'),
+      el('div', { class: 'hint' }, renderOk
+        ? 'Reading it in a hidden tab lets its scripts run. That tab uses your Chrome sign-in for this site, and is closed right after each check. Nothing was saved as a version.'
+        : 'Your organization doesn’t allow reading pages in a hidden tab. Nothing was saved as a version.')),
+    renderOk ? el('button', {
+      class: 'primary',
+      onclick: choose('tab', 'This watch now reads the page in a hidden tab.'),
+    }, 'Read it in a hidden tab') : null,
+    cookiesOk ? el('button', {
+      title: 'Some sites send the real page to signed-in users. Your cookies only ever go to this site.',
+      onclick: choose('cookies', 'Tried again with your cookies.'),
+    }, 'Try with my cookies') : null,
+    el('button', {
+      title: 'Save what downloading gives, and stop asking for this watch',
+      onclick: choose('asis', 'Saved the page as it downloads.'),
+    }, 'Keep it as downloaded'));
+}
+
 async function renderDetail() {
   const { id, edit, isNew, settings } = route();
   const detail = $('detail');
@@ -202,6 +238,8 @@ async function renderDetail() {
       onclick: () => call('openSignIn', { id }).catch((e) => toast(e.message)),
     }, 'Open page to sign in')) : null;
 
+  const scriptsBanner = watch.scriptsNeeded && watch.mode !== 'tab' ? scriptsNeededBanner(watch) : null;
+
   const schedule = watch.schedule?.type === 'random'
     ? `randomly every ${watch.intervalMinutes}–${watch.schedule.randomMaxMinutes} min`
     : formatInterval(watch.intervalMinutes);
@@ -222,7 +260,8 @@ async function renderDetail() {
     watch.lastSummary ? el('p', { class: 'summary' }, `Latest change: ${watch.lastSummary}`) : null,
     banner,
     signInBanner,
-    watch.lastError && !(signInBanner && signInText && !watch.paused) ? el('p', { class: 'error' }, watch.lastError) : null,
+    scriptsBanner,
+    watch.lastError && !(signInBanner && signInText && !watch.paused) && !scriptsBanner ? el('p', { class: 'error' }, watch.lastError) : null,
     el('div', { class: 'row' },
       el('button', {
         class: 'primary',
@@ -557,7 +596,7 @@ const PRESETS = [
 function watchForm(watch) {
   const w = watch || {
     name: '', url: '', selectors: [], excludes: [], regexFilter: '', mode: 'fetch', renderDelaySeconds: 3,
-    includeFrames: false, live: false, sendCookies: false, autoCookies: true, onSignIn: 'notify', intervalMinutes: DEFAULT_INTERVAL_MINUTES,
+    includeFrames: false, live: false, sendCookies: false, autoCookies: true, askToRender: true, onSignIn: 'notify', intervalMinutes: DEFAULT_INTERVAL_MINUTES,
     schedule: { type: 'interval', randomMaxMinutes: DEFAULT_INTERVAL_MINUTES * 2, window: { enabled: false, days: [1, 2, 3, 4, 5], start: '09:00', end: '17:00' } },
     historyLimit: DEFAULT_HISTORY, condition: { match: 'all', rules: [] }, notify: true, sound: false, labels: [],
   };
@@ -591,6 +630,7 @@ function watchForm(watch) {
     live: el('input', { type: 'checkbox', checked: w.live }),
     sendCookies: el('input', { type: 'checkbox', checked: w.sendCookies }),
     autoCookies: el('input', { type: 'checkbox', checked: w.autoCookies !== false }),
+    askToRender: el('input', { type: 'checkbox', checked: w.askToRender !== false }),
     onSignIn: el('select', {},
       el('option', { value: 'notify' }, 'Send me a notification'),
       el('option', { value: 'tab' }, 'Open the page in a new tab so I can sign in'),
@@ -635,6 +675,9 @@ function watchForm(watch) {
   const autoCookiesRow = el('label', { class: 'check' }, f.autoCookies,
     el('span', {}, 'Turn this on by itself if the page asks me to sign in',
       el('div', { class: 'hint' }, 'The check is tried once more with your cookies, and they stay on only if that gets past the sign-in page.')));
+  const askToRenderRow = el('label', { class: 'check' }, f.askToRender,
+    el('span', {}, 'Ask me before using a hidden tab if the page needs its scripts',
+      el('div', { class: 'hint' }, 'When downloading gives only a placeholder like “your browser is not supported” or an empty page, it isn’t saved, and you’re asked what to do.')));
   const signInRow = el('label', { class: 'field' }, el('span', {}, 'If the page asks me to sign in'), f.onSignIn,
     el('span', { class: 'hint' }, 'This happens once, not on every check. After you sign in, checks pick up again by themselves.'));
   const randomRow = el('span', { class: 'inline' }, 'and', f.randomMax, f.randomUnit);
@@ -649,6 +692,7 @@ function watchForm(watch) {
     framesRow.hidden = f.mode.value !== 'tab';
     cookieRow.hidden = f.mode.value === 'tab';
     autoCookiesRow.hidden = f.mode.value === 'tab' || f.sendCookies.checked || Boolean(policy?.disableCookies);
+    askToRenderRow.hidden = f.mode.value === 'tab';
     randomRow.hidden = f.scheduleType.value !== 'random';
     windowRow.hidden = !f.windowOn.checked;
     matchRow.hidden = rules.children.length < 2;
@@ -711,6 +755,7 @@ function watchForm(watch) {
         live: f.live.checked,
         sendCookies: f.sendCookies.checked,
         autoCookies: f.autoCookies.checked,
+        askToRender: f.askToRender.checked,
         onSignIn: f.onSignIn.value,
         condition: { match: f.match.value, rules: [...rules.children].map((r) => r.read()) },
         notify: f.notify.checked,
@@ -772,6 +817,7 @@ function watchForm(watch) {
     framesRow,
     cookieRow,
     autoCookiesRow,
+    askToRenderRow,
     signInRow),
   el('fieldset', {}, el('legend', {}, 'Alerts'),
     matchRow,

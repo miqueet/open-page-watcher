@@ -7,6 +7,7 @@ import {
 import { pdfToText } from './lib/pdf.js';
 import { getPolicy, checkSiteAllowed, applyPolicy } from './lib/policy.js';
 import { needsSignIn, signInError, SIGN_IN_MESSAGE } from './lib/signin.js';
+import { scriptsNeeded, scriptsError } from './lib/scriptpage.js';
 import {
   sanitizeWatch, exportableWatch, postProcess, isDue, nextCheckTime, originPattern, sameDocument, comparisonKey, isHttpUrl,
 } from './lib/watch.js';
@@ -140,6 +141,7 @@ async function checkWatch(id, { via = 'schedule', tabId } = {}) {
     let result;
     let error = '';
     let signIn = false;
+    let scripts = '';
     let cookiesTurnedOn = false;
     try {
       checkSiteAllowed(policy, watch.url);
@@ -167,8 +169,10 @@ async function checkWatch(id, { via = 'schedule', tabId } = {}) {
       error = e?.message || String(e);
       signIn = e?.signIn === true;
       if (signIn) error = signInMessage(watch, policy);
+      scripts = e?.scriptsNeeded || '';
+      if (scripts && !renderAllowed(policy)) error += " Your organization doesn't allow reading pages in a hidden tab.";
     }
-    await record(watch, result, error, { via, started, signIn, cookiesTurnedOn });
+    await record(watch, result, error, { via, started, signIn, scripts, cookiesTurnedOn });
   } finally {
     inFlight.delete(id);
   }
@@ -182,7 +186,13 @@ function signInMessage(watch, policy) {
   return `${SIGN_IN_MESSAGE}. Sign in to the site in Chrome, then check again.`;
 }
 
-async function record(watch, result, error, { via, started, signIn = false, cookiesTurnedOn = false }) {
+// Reading a page in a hidden tab loads it as the signed-in user, so a policy
+// against sending cookies rules it out too.
+function renderAllowed(policy) {
+  return !policy.disableRenderInTab && !policy.disableCookies;
+}
+
+async function record(watch, result, error, { via, started, signIn = false, scripts = '', cookiesTurnedOn = false }) {
   const { id } = watch;
   const now = Date.now();
   const logEntry = { t: now, ok: !error, changed: false, alerted: false, error, ms: now - started, via };
@@ -196,13 +206,16 @@ async function record(watch, result, error, { via, started, signIn = false, cook
       w.lastError = error;
       w.errorCount = (w.errorCount || 0) + 1;
       if (signIn) w.signInNeeded = true;
+      w.scriptsNeeded = scripts;
       return { ...w };
     });
     await appendLog(id, logEntry);
-    // A sign-in page gets the watch's own sign-in action instead of the
-    // "keeps failing" alert.
+    // A sign-in page gets the watch's own sign-in action, and a page that
+    // needs its scripts a question, instead of the "keeps failing" alert.
     if (updated && signIn) {
       if (via !== 'live' && !updated.signInHandled) await handleSignIn(updated, now).catch((e) => console.warn('Sign-in action failed', e));
+    } else if (updated && scripts) {
+      if (!updated.scriptsAsked) await askToRender(updated, now).catch((e) => console.warn('Asking to render failed', e));
     } else if (updated) {
       await maybeAlertError(updated, now);
     }
@@ -214,12 +227,15 @@ async function record(watch, result, error, { via, started, signIn = false, cook
   const previous = history[history.length - 1];
   const changed = !previous
     || comparisonKey(previous.text, watch.ignore) !== comparisonKey(result.text, watch.ignore);
+  // The way the page is loaded just changed: this version is the new starting
+  // point, not a change to alert about.
+  const rebaseline = watch.rebaseline === true && Boolean(previous) && changed;
   let alert = false;
   if (changed) {
     const entry = { t: now, text: result.text };
     if (result.html) entry.html = result.html;
     await appendHistory(id, entry, watch.historyLimit);
-    if (previous) {
+    if (previous && !rebaseline) {
       logEntry.changed = true;
       alert = conditionMet(watch.condition, previous.text, result.text, history.map((h) => h.text));
     }
@@ -236,6 +252,7 @@ async function record(watch, result, error, { via, started, signIn = false, cook
   }
   logEntry.alerted = alert;
   if (cookiesTurnedOn) logEntry.note = 'Turned on “Send my cookies” because the page asked you to sign in';
+  else if (rebaseline) logEntry.note = 'New starting point after changing how the page is loaded';
   await updateWatches((all) => {
     const w = all[id];
     if (!w) return;
@@ -247,7 +264,10 @@ async function record(watch, result, error, { via, started, signIn = false, cook
     if (w.signInHandled && w.onSignIn === 'pause') w.paused = false; // paused only until signed in
     w.signInNeeded = false;
     w.signInHandled = false;
-    if (previous && changed) {
+    w.scriptsNeeded = '';
+    w.scriptsAsked = false;
+    w.rebaseline = false;
+    if (previous && changed && !rebaseline) {
       w.lastChangedAt = now;
       w.lastSummary = summarizeChange(previous.text, result.text, 160);
     }
@@ -318,6 +338,14 @@ async function fetchAndExtract(watch, policy) {
   if (result && needsSignIn({
     watchUrl: watch.url, finalUrl: response.url || watch.url, signInForm: result.signInForm, title: result.title, found: result.ok,
   })) throw signInError();
+  // A placeholder or empty shell instead of the page: ask before reading it
+  // in a hidden tab, rather than saving the placeholder as a version.
+  if (result && !result.kind && watch.askToRender !== false && (result.ok || typeof result.pageText === 'string')) {
+    const reason = scriptsNeeded({
+      text: result.text, pageText: result.pageText, scripts: result.scripts, emptyRoot: result.emptyRoot, selected: watch.selectors.length > 0, found: result.ok,
+    });
+    if (reason) throw scriptsError(reason, result.ok ? result.text : result.pageText);
+  }
   if (!result?.ok) throw new Error(result?.error || 'Could not read the page');
   return result;
 }
@@ -616,9 +644,10 @@ async function maybeAlertError(watch, now) {
   }).catch(() => {});
 }
 
-// Notification ids are "watch:<id>:<time>", "signin:<id>:<time>" or "digest:<time>".
+// Notification ids are "watch:<id>:<time>", "signin:<id>:<time>",
+// "scripts:<id>:<time>" or "digest:<time>".
 function parseNotification(notificationId) {
-  const m = /^(watch|signin):([a-z0-9-]+):\d+$/i.exec(notificationId);
+  const m = /^(watch|signin|scripts):([a-z0-9-]+):\d+$/i.exec(notificationId);
   return m ? { kind: m[1], id: m[2] } : { kind: '', id: null };
 }
 
@@ -636,6 +665,10 @@ chrome.notifications.onButtonClicked.addListener(async (notificationId, buttonIn
   if (!id) return;
   if (kind === 'signin') {
     if (buttonIndex === 0) return openSignInTab(id).catch(() => {});
+    return openInbox(id);
+  }
+  if (kind === 'scripts') {
+    if (buttonIndex === 0 && renderAllowed(await getPolicy())) return changeLoading(id, 'tab').catch(() => openInbox(id));
     return openInbox(id);
   }
   if (buttonIndex === 0) return openInbox(id);
@@ -670,6 +703,55 @@ async function handleSignIn(watch, now) {
     if (action === 'pause') w.paused = true;
   });
   await broadcast({ type: 'changed', id: watch.id });
+}
+
+// ---------------------------------------------------------------------------
+// Pages that need their scripts
+
+// Asks once whether to read a page in a hidden tab, because downloading it
+// without running scripts only gave a placeholder. Nothing changes until the
+// user answers, here or in the inbox.
+async function askToRender(watch, now) {
+  if (inQuietHours(await getSettings(), new Date(now))) return; // asked after quiet hours
+  const allowed = renderAllowed(await getPolicy());
+  await chrome.notifications.create(`scripts:${watch.id}:${now}`, {
+    type: 'basic',
+    iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+    title: `Needs a hidden tab: ${watch.name}`.slice(0, 120),
+    message: allowed
+      ? `${new URL(watch.url).hostname} only shows this page once its scripts run. Read it in a hidden tab? That tab uses your Chrome sign-in for this site.`
+      : `${new URL(watch.url).hostname} only shows this page once its scripts run, and your organization doesn't allow reading pages in a hidden tab.`,
+    buttons: allowed ? [{ title: 'Read it in a hidden tab' }, { title: 'View watch' }] : [{ title: 'View watch' }],
+    priority: 1,
+  });
+  await updateWatches((all) => {
+    if (all[watch.id]) all[watch.id].scriptsAsked = true;
+  });
+  await broadcast({ type: 'changed', id: watch.id });
+}
+
+// The user's answer for a page that needs its scripts:
+//   'tab':     read it in a hidden tab from now on
+//   'cookies': download it with the user's cookies (some sites send the real
+//              page to signed-in users)
+//   'asis':    keep downloading it and save what comes back
+async function changeLoading(id, how) {
+  const policy = await getPolicy();
+  if (how === 'tab' && !renderAllowed(policy)) throw new Error("Your organization doesn't allow reading pages in a hidden tab");
+  if (how === 'cookies' && policy.disableCookies) throw new Error("Your organization doesn't allow sending your cookies");
+  if (!['tab', 'cookies', 'asis'].includes(how)) throw new Error('Unknown choice');
+  await updateWatches((all) => {
+    const w = all[id];
+    if (!w) throw new Error('Watch not found');
+    if (how === 'tab') w.mode = 'tab';
+    if (how === 'cookies') w.sendCookies = true;
+    if (how === 'asis') w.askToRender = false;
+    else w.rebaseline = true;
+    w.scriptsNeeded = '';
+    w.scriptsAsked = false;
+  });
+  await broadcast({ type: 'changed', id });
+  await checkWatch(id);
 }
 
 // Opens the watched page so the user can sign in. The watch is checked again
@@ -836,6 +918,7 @@ const uiHandlers = {
       || JSON.stringify(before.schedule) !== JSON.stringify(clean.schedule);
     if (rescheduled) clean.nextCheckAt = nextCheckTime(clean, clean.lastCheckedAt || Date.now());
     if (before.onSignIn !== clean.onSignIn) clean.signInHandled = false; // act on the new choice next check
+    if (before.askToRender !== clean.askToRender || before.mode !== clean.mode) clean.scriptsAsked = false;
     await updateWatches((all) => {
       all[clean.id] = clean;
     });
@@ -872,6 +955,11 @@ const uiHandlers = {
 
   async openSignIn({ id }) {
     await openSignInTab(id);
+    return {};
+  },
+
+  async changeLoading({ id, how }) {
+    await changeLoading(id, how);
     return {};
   },
 

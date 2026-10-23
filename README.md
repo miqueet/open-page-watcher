@@ -48,7 +48,11 @@ from any other proprietary extension.
 - Quick fills for all links, the page title, headings or the description
 - Web pages, JSON, plain text, PDF files, RSS/Atom feeds and XML sitemaps
 - Pages that need JavaScript can be rendered in a hidden window, including
-  content inside frames
+  content inside frames. Every watch starts by downloading the page without
+  running scripts; if that only gives a placeholder ("Internet Explorer is not
+  supported", "enable JavaScript") or an empty app shell, nothing is saved and
+  you're asked, for that watch, whether to read it in a hidden tab or try with
+  your cookies
 - Right-click any page or link to watch it, or press Alt+Shift+W to pick parts
 
 **When to check**

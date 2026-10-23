@@ -12,9 +12,13 @@
 //   userTab: boolean,          // the user's own tab (live mode): skip anything they may have typed
 //   expect: { url } | { origin },  // the main frame must still show this page or site
 // }
-// Returns { ok: true, text, matched, html? } or { ok: false, error }, plus
-// signInForm (the page has a password or username field; no values are read)
-// and title, used to spot a sign-in page.
+// Returns { ok: true, text, matched, html? } or { ok: false, error, pageText? },
+// plus signInForm (the page has a password or username field; no values are
+// read) and title, used to spot a sign-in page, and scripts (how many script
+// elements the page has) and emptyRoot (an app's mount point is empty), used
+// to spot a page that only works with scripts.
+// pageText is the start of the whole page's text when the selected parts
+// weren't found.
 export function extractText(spec, doc = document) {
   const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'IFRAME', 'OBJECT', 'HEAD']);
   const BLOCK = new Set([
@@ -146,13 +150,19 @@ export function extractText(spec, doc = document) {
 
   let signInForm = false;
   let title = '';
+  let scripts = 0;
+  let emptyRoot = false;
   try {
     signInForm = Boolean(doc.querySelector('input[type=password i], input[autocomplete~="username" i], input[autocomplete~="current-password" i]'));
     title = String(doc.title || '').slice(0, 200);
+    scripts = doc.getElementsByTagName('script').length;
+    // The element that single-page apps fill in, still empty.
+    emptyRoot = Array.from(doc.querySelectorAll('#root, #app, #__next, #__nuxt, app-root, [ng-app], [ng-version], [data-reactroot]'))
+      .some((n) => !n.firstElementChild && !String(n.textContent || '').trim());
   } catch {
     // not an HTML document
   }
-  return Object.assign(read(), { signInForm, title });
+  return Object.assign(read(), { signInForm, title, scripts, emptyRoot });
 
   function read() {
     try {
@@ -187,7 +197,11 @@ export function extractText(spec, doc = document) {
           else parts.push(node.nodeType === 1 || node.nodeType === 9 ? textOf(node) : String(node.nodeValue ?? node.textContent ?? ''));
         }
       }
-      if (matched === 0) return { ok: false, error: 'None of the selected elements were found on the page' };
+      if (matched === 0) {
+        const root = doc.body || doc.documentElement;
+        excluded = new Set();
+        return { ok: false, error: 'None of the selected elements were found on the page', pageText: root && !userTab ? textOf(root).slice(0, 2000) : '' };
+      }
       return finish({ ok: true, text: parts.filter(Boolean).join('\n'), matched });
     } catch (e) {
       return { ok: false, error: 'Selector error: ' + (e && e.message ? e.message : String(e)) };

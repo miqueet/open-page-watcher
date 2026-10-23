@@ -11,7 +11,9 @@ managed Chrome browsers, and how to limit what it can do.
   to one site at a time, when they add a watch for it. Access is released when
   the last watch on that site is deleted.
 - Pages are downloaded and parsed without running their scripts, unless the user
-  turns on "render in tab" for a watch.
+  turns on "render in tab" for a watch. When a download only gives a
+  placeholder, the extension asks the user before switching that watch; it
+  never switches by itself, and `disableRenderInTab` removes the option.
 - Cookies are not sent with checks unless the watch has that turned on, either
   by the user or automatically when a page asks the user to sign in.
   `disableCookies` turns both off.
