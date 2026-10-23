@@ -90,6 +90,13 @@ These run on the device but were left out as security trade-offs:
    check gets through again. Render-in-tab mode always loads the page as the
    signed-in user, so the organization setting that forces cookies off also
    turns render-in-tab and the automatic switch off.
+   A downloaded page that only works with scripts (a "browser not supported"
+   or "enable JavaScript" placeholder, an empty app mount point such as
+   `#root`, or selected parts missing from a near-empty page with scripts) is
+   never saved as a version. The user is asked once, per watch, whether to read
+   it in a hidden tab, try again with cookies, or keep it as downloaded; nothing
+   is escalated without that answer. The first version read the new way is a
+   new starting point and doesn't alert.
 8. **Bounded work.** Requests time out after 30 seconds, pages over 5 MB and
    PDFs over 20 MB are rejected, watched text over 2 million characters is
    refused, snapshots are capped at 300 KB, history and logs are capped per

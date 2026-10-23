@@ -101,3 +101,5 @@ kbd { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; border: 1px sol
 table.shortcuts { width: auto; justify-self: start; }
 table.shortcuts td:first-child { padding-right: 24px; }
 .banner + .banner { margin-top: 8px; }
+.banner { flex-wrap: wrap; }
+.banner > span { flex: 1 1 260px; }

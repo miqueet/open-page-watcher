@@ -47,6 +47,20 @@ const server = http.createServer((req, res) => {
     res.setHeader('content-type', 'text/javascript');
     return res.end(`document.getElementById('out').textContent = 'rendered ${price}';`);
   }
+  if (req.url === '/app') {
+    // Like a single-page app: a placeholder for old browsers, and the real
+    // content only once its script runs.
+    res.setHeader('content-type', 'text/html');
+    return res.end(`<!doctype html><title>App</title>
+      <div id="ie">Internet Explorer is not supported. Please use another browser such as Edge, Chrome, Firefox, Safari, or Opera.</div>
+      <div id="app"></div>
+      <script>document.getElementById('ie').remove(); document.getElementById('app').textContent = 'Array load ${price}';</script>`);
+  }
+  if (req.url === '/shell') {
+    res.setHeader('content-type', 'text/html');
+    return res.end(`<!doctype html><title>Shell</title><div id="root"></div>
+      <script>document.getElementById('root').innerHTML = '<p class="value">Value ${price}</p>';</script>`);
+  }
   if (req.url === '/data.json') {
     res.setHeader('content-type', 'application/json');
     return res.end(JSON.stringify({ price, ok: true }));
@@ -772,6 +786,85 @@ try {
     await page.evaluate(() => { location.hash = '#/'; });
     await send({ type: 'deleteWatch', id: paused });
     await signedIn(false);
+  });
+
+  await step('a page that needs its scripts asks before using a hidden tab', async () => {
+    await clearNotifications();
+    const { id } = await send({ type: 'createWatch', watch: { url: `${base}/app` } });
+    const w = await waitFor(async () => { const x = await watchOf(id); return x.scriptsAsked && x; });
+    assert.equal(w.scriptsNeeded, 'placeholder');
+    assert.match(w.lastError, /needs its scripts to run to show its content: downloading it only gave “Internet Explorer is not supported/);
+    assert.equal(w.mode, 'fetch', 'nothing changes without asking');
+    assert.equal((await history(id)).length, 0, 'the placeholder is not saved as a version');
+    assert.ok((await notificationIds()).some((n) => n.startsWith(`scripts:${id}:`)), 'asked with a notification');
+
+    // Asked once, not on every check.
+    await clearNotifications();
+    await send({ type: 'checkNow', id });
+    assert.equal((await notificationIds()).length, 0);
+
+    await page.evaluate((i) => { location.hash = `#/w/${i}`; }, id);
+    await page.click('.banner button:has-text("Read it in a hidden tab")');
+    const h = await waitFor(async () => (await history(id))[0], 30000);
+    assert.equal(h.text, `Array load ${price}`);
+    const after = await watchOf(id);
+    assert.equal(after.mode, 'tab');
+    assert.equal(after.scriptsNeeded, '');
+    assert.equal(after.lastError, '');
+    await page.evaluate(() => { location.hash = '#/'; });
+    await send({ type: 'deleteWatch', id });
+  });
+
+  await step('a placeholder saved before is replaced by the rendered page without an alert', async () => {
+    // A watch made before placeholders were spotted, with one as its baseline.
+    const { id } = await send({ type: 'createWatch', watch: { url: `${base}/app`, askToRender: false } });
+    const [old] = await waitFor(async () => { const x = await history(id); return x.length && x; });
+    assert.match(old.text, /Internet Explorer is not supported/);
+    await send({ type: 'updateWatch', watch: { ...(await watchOf(id)), askToRender: true } });
+    await send({ type: 'checkNow', id });
+    assert.equal((await watchOf(id)).scriptsNeeded, 'placeholder');
+    assert.equal((await history(id)).length, 1);
+
+    await send({ type: 'changeLoading', id, how: 'tab' });
+    const h = await history(id);
+    assert.equal(h.length, 2);
+    assert.equal(h[1].text, `Array load ${price}`);
+    const w = await watchOf(id);
+    assert.equal(w.unread, false, 'no alert');
+    assert.equal(w.lastChangedAt, 0, 'not counted as a change');
+    assert.equal(w.rebaseline, false);
+    const log = await page.evaluate(async (k) => (await chrome.storage.local.get(k))[k], `log:${id}`);
+    assert.match(log[log.length - 1].note, /New starting point/);
+
+    // Later changes alert as usual.
+    const before = price;
+    price = '$7';
+    await send({ type: 'checkNow', id });
+    assert.equal((await watchOf(id)).unread, true);
+    price = before;
+    await send({ type: 'deleteWatch', id });
+  });
+
+  await step('selected parts that only appear with scripts: try cookies, or keep it as downloaded', async () => {
+    const { id } = await send({ type: 'createWatch', watch: { url: `${base}/shell`, selectors: [{ type: 'css', expr: '.value' }] } });
+    let w = await waitFor(async () => { const x = await watchOf(id); return x.scriptsNeeded && x; });
+    assert.equal(w.scriptsNeeded, 'missing');
+    assert.match(w.lastError, /selected parts only appear once they run/);
+
+    // Cookies don't help this page: it still asks, and nothing is saved.
+    await send({ type: 'changeLoading', id, how: 'cookies' });
+    w = await watchOf(id);
+    assert.equal(w.sendCookies, true);
+    assert.equal(w.scriptsNeeded, 'missing');
+    assert.equal(w.mode, 'fetch');
+
+    await send({ type: 'changeLoading', id, how: 'asis' });
+    w = await watchOf(id);
+    assert.equal(w.askToRender, false);
+    assert.equal(w.scriptsNeeded, '');
+    assert.match(w.lastError, /None of the selected elements/);
+    assert.equal((await send({ type: 'changeLoading', id, how: 'sideways' })).ok, false);
+    await send({ type: 'deleteWatch', id });
   });
 
   await step('popup renders', async () => {

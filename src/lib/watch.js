@@ -135,6 +135,9 @@ export function sanitizeWatch(input, existing = {}) {
     // them on if that gets past the sign-in page.
     autoCookies: src.autoCookies !== false,
     onSignIn: SIGN_IN_ACTIONS.includes(src.onSignIn) ? src.onSignIn : 'notify',
+    // When a downloaded page only shows its content once scripts run, ask
+    // whether to read it in a hidden tab instead of saving the placeholder.
+    askToRender: src.askToRender !== false,
     intervalMinutes,
     schedule,
     historyLimit: clampInt(src.historyLimit, 2, MAX_HISTORY, DEFAULT_HISTORY),
@@ -161,11 +164,17 @@ export function sanitizeWatch(input, existing = {}) {
     lastSummary: typeof existing.lastSummary === 'string' ? existing.lastSummary : '',
     signInNeeded: existing.signInNeeded === true,
     signInHandled: existing.signInHandled === true,
+    scriptsNeeded: ['placeholder', 'empty', 'missing'].includes(existing.scriptsNeeded) ? existing.scriptsNeeded : '',
+    scriptsAsked: existing.scriptsAsked === true,
+    // The next version is a new starting point (the way the page is loaded
+    // changed), so it doesn't count as a change.
+    rebaseline: existing.rebaseline === true,
   };
 }
 
 const RUNTIME_FIELDS = [
   'lastCheckedAt', 'lastChangedAt', 'nextCheckAt', 'lastError', 'errorCount', 'unread', 'lastSummary', 'signInNeeded', 'signInHandled',
+  'scriptsNeeded', 'scriptsAsked', 'rebaseline',
 ];
 
 // Fields included in an export file.
