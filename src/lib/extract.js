@@ -9,10 +9,11 @@
 //   excludes: [{ type, expr }],                            // skipped inside selections
 //   baseUrl: string,                                       // resolves relative href/src
 //   captureHtml: boolean,                                  // also return the selected HTML
+//   captureFormat: boolean,    // also return the text annotated with its formatting
 //   userTab: boolean,          // the user's own tab (live mode): skip anything they may have typed
 //   expect: { url } | { origin },  // the main frame must still show this page or site
 // }
-// Returns { ok: true, text, matched, html? } or { ok: false, error, pageText? },
+// Returns { ok: true, text, matched, html?, format? } or { ok: false, error, pageText? },
 // plus signInForm (the page has a password or username field; no values are
 // read) and title, used to spot a sign-in page, and scripts (how many script
 // elements the page has) and emptyRoot (an app's mount point is empty), used
@@ -113,8 +114,93 @@ export function extractText(spec, doc = document) {
     };
   }
 
-  function textOf(root) {
+  // Formatting a reader can see, written into the text as plain marks:
+  // # headings, - list items, > quotes, | table cells, **bold**, _italic_,
+  // ~~struck~~, `code`, [links](url), and {name}...{/name} for the rest. Only
+  // the page's own markup and inline styles count: stylesheets and class
+  // names are left out because sites rename and retheme them all the time.
+  const INLINE_MARKS = [
+    ['bold', '**', '**'], ['italic', '_', '_'], ['strike', '~~', '~~'], ['code', '`', '`'],
+    ['underline', '{underline}', '{/underline}'], ['highlight', '{highlight}', '{/highlight}'],
+    ['superscript', '{sup}', '{/sup}'], ['subscript', '{sub}', '{/sub}'], ['small', '{small}', '{/small}'],
+    ['big', '{big}', '{/big}'], ['hidden', '{hidden}', '{/hidden}'],
+  ];
+  const TAG_MARKS = {
+    B: 'bold', STRONG: 'bold', I: 'italic', EM: 'italic', CITE: 'italic', DFN: 'italic', VAR: 'italic',
+    S: 'strike', STRIKE: 'strike', DEL: 'strike', CODE: 'code', KBD: 'code', SAMP: 'code', TT: 'code',
+    TH: 'bold', U: 'underline', INS: 'underline', MARK: 'highlight', SUP: 'superscript', SUB: 'subscript', SMALL: 'small', BIG: 'big',
+  };
+  const tidy = (v) => String(v).toLowerCase().replace(/\s+/g, ' ').replace(/\s*!important$/, '').trim().slice(0, 80);
+
+  // The formatting an element turns on: { marks: Set, values: [[name, value]], href }
+  function formatOf(node, tag) {
+    const marks = new Set();
+    const values = [];
+    if (TAG_MARKS[tag]) marks.add(TAG_MARKS[tag]);
+    if (node.hasAttribute('hidden')) marks.add('hidden');
+    if (tag === 'FONT') {
+      if (node.getAttribute('color')) values.push(['color', tidy(node.getAttribute('color'))]);
+      if (node.getAttribute('size')) values.push(['size', tidy(node.getAttribute('size'))]);
+    }
+    const style = node.getAttribute('style');
+    if (style) {
+      for (const decl of style.split(';')) {
+        const i = decl.indexOf(':');
+        if (i < 0) continue;
+        const prop = decl.slice(0, i).trim().toLowerCase();
+        const value = tidy(decl.slice(i + 1));
+        if (!value) continue;
+        if (prop === 'color') values.push(['color', value]);
+        else if (prop === 'background-color' || (prop === 'background' && !/url\(/.test(value))) values.push(['background', value]);
+        else if (prop === 'font-size') values.push(['size', value]);
+        else if (prop === 'font-weight' && (/^bold/.test(value) || Number(value) >= 600)) marks.add('bold');
+        else if (prop === 'font-style' && /italic|oblique/.test(value)) marks.add('italic');
+        else if (/^text-decoration(-line)?$/.test(prop)) {
+          if (/underline/.test(value)) marks.add('underline');
+          if (/line-through/.test(value)) marks.add('strike');
+        } else if ((prop === 'display' && value === 'none') || (prop === 'visibility' && value === 'hidden')) marks.add('hidden');
+      }
+    }
+    let href = '';
+    if (tag === 'A' && node.hasAttribute('href')) href = (attrOf(node, 'href') || '').slice(0, 300);
+    return { marks, values, href };
+  }
+
+  // Writes the marks that open an element's formatting and returns a function
+  // that writes the closing ones. Empty elements get no marks.
+  function openFormat(node, tag, out, active) {
+    if (!String(node.textContent || '').trim()) return null;
+    if (/^H[1-6]$/.test(tag)) out.push('#'.repeat(Number(tag[1])) + ' ');
+    else if (tag === 'LI') out.push(node.parentElement && tagOf(node.parentElement) === 'OL' ? '1. ' : '- ');
+    else if (tag === 'BLOCKQUOTE') out.push('> ');
+    else if (tag === 'TD' || tag === 'TH') out.push('| ');
+    const { marks, values, href } = formatOf(node, tag);
+    const opened = [];
+    for (const [name, open, close] of INLINE_MARKS) {
+      if (marks.has(name) && !active.get(name)) opened.push([name, open, close]);
+    }
+    for (const [name, value] of values) {
+      if (active.get(name) !== value) opened.push([name, `{${name}: ${value}}`, `{/${name}}`, value]);
+    }
+    if (href) opened.push(['link', '[', `](${href})`, href]);
+    if (!opened.length) return null;
+    const saved = opened.map(([name]) => [name, active.get(name)]);
+    for (const [name, open, , value] of opened) {
+      out.push(open);
+      active.set(name, value ?? true);
+    }
+    return () => {
+      for (let i = opened.length - 1; i >= 0; i--) out.push(opened[i][2]);
+      for (const [name, prev] of saved) {
+        if (prev === undefined) active.delete(name);
+        else active.set(name, prev);
+      }
+    };
+  }
+
+  function textOf(root, format = false) {
     const out = [];
+    const active = new Map(); // marks turned on by an ancestor, so nested ones aren't repeated
     (function walk(node) {
       if (excluded.has(node)) return;
       if (node.nodeType === 3) {
@@ -136,7 +222,9 @@ export function extractText(spec, doc = document) {
       if (tag === 'IMG' && node.getAttribute('alt')) out.push(' ' + node.getAttribute('alt') + ' ');
       const block = BLOCK.has(tag);
       if (block) out.push('\n');
+      const close = format && node.nodeType === 1 ? openFormat(node, tag, out, active) : null;
       for (let c = node.firstChild; c; c = c.nextSibling) walk(c);
+      if (close) close();
       if (tag === 'TD' || tag === 'TH') out.push('\t');
       if (block) out.push('\n');
     })(root);
@@ -176,14 +264,18 @@ export function extractText(spec, doc = document) {
       const selectors = (spec && spec.selectors) || [];
       excluded = new Set(((spec && spec.excludes) || []).flatMap(find));
       const html = spec && spec.captureHtml ? newHtmlBuffer() : null;
+      const format = Boolean(spec && spec.captureFormat);
+      const formatParts = [];
       const finish = (result) => {
         if (html && html.size <= MAX_HTML) result.html = html.parts.join('');
+        if (format) result.format = formatParts.filter(Boolean).join('\n');
         return result;
       };
       if (selectors.length === 0) {
         const root = doc.body || doc.documentElement;
         if (!root) return { ok: false, error: 'Page has no content' };
         if (html) htmlOf(root, html);
+        if (format) formatParts.push(textOf(root, true));
         return finish({ ok: true, text: textOf(root), matched: 1 });
       }
       const parts = [];
@@ -193,8 +285,11 @@ export function extractText(spec, doc = document) {
         matched += nodes.length;
         for (const node of nodes) {
           if (html && node.nodeType === 1) htmlOf(node, html);
-          if (sel.attr) parts.push(attrOf(node, sel.attr));
-          else parts.push(node.nodeType === 1 || node.nodeType === 9 ? textOf(node) : String(node.nodeValue ?? node.textContent ?? ''));
+          const element = node.nodeType === 1 || node.nodeType === 9;
+          const part = sel.attr ? attrOf(node, sel.attr)
+            : element ? textOf(node) : String(node.nodeValue ?? node.textContent ?? '');
+          parts.push(part);
+          if (format) formatParts.push(!sel.attr && element ? textOf(node, true) : part);
         }
       }
       if (matched === 0) {

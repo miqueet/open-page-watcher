@@ -2,6 +2,7 @@ import {
   call, getWatches, getHistory, hasAccess, requestAccess, onChanged, timeAgo, formatInterval, el,
 } from './api.js';
 import { diffText } from '../lib/diff.js';
+import { formatMarks } from '../lib/formatting.js';
 import { RULE_TYPES, RULE_SOURCES, normalizeCondition } from '../lib/conditions.js';
 import { DEFAULT_INTERVAL_MINUTES, DEFAULT_HISTORY, SIGN_IN_ACTIONS, isHttpUrl } from '../lib/watch.js';
 import { getLog, getSettings, DIGEST_CHOICES } from '../lib/storage.js';
@@ -20,7 +21,7 @@ const state = {
   label: null,
   search: '',
   checked: new Set(), // watches ticked for bulk actions
-  view: 'text', // text | side | visual | source
+  view: 'text', // text | side | format | visual | source
   showDeleted: false,
   policy: null, // organization policy from managed storage
   picking: null, // token of a "Pick on page" the open form is waiting for
@@ -340,7 +341,10 @@ function versionLabel(entry, i) {
   return `Version ${i + 1} · ${new Date(entry.t).toLocaleString()}`;
 }
 
-const VIEWS = { text: 'Text', side: 'Side by side', visual: 'Visual', source: 'Source' };
+const VIEWS = { text: 'Text', side: 'Side by side', format: 'Formatting', visual: 'Visual', source: 'Source' };
+
+// How to read the marks in the formatting view.
+const FORMAT_KEY = 'Formatting is shown with marks: # heading, - list item, > quote, | table cell, **bold**, _italic_, ~~struck through~~, `code`, [link text](address), and {color: red}…{/color} style marks for colors, sizes, underlines, highlights and hidden text.';
 
 function historyView(history) {
   const wrap = el('section');
@@ -376,14 +380,16 @@ function historyView(history) {
     changes[current].scrollIntoView({ block: 'center', behavior: 'smooth' });
   };
 
+  const hasFormats = history.some((h) => typeof h.format === 'string');
   const draw = () => {
     current = -1;
+    const view = state.view === 'format' && !hasFormats ? 'text' : state.view;
     const a = history[Number(from.value)];
     const b = history[Number(to.value)];
-    for (const t of tabs.children) t.classList.toggle('active', t.dataset.view === state.view);
-    onlyChanges.parentElement.hidden = state.view === 'visual';
-    showDeleted.parentElement.hidden = state.view !== 'visual';
-    if (state.view === 'visual') {
+    for (const t of tabs.children) t.classList.toggle('active', t.dataset.view === view);
+    onlyChanges.parentElement.hidden = view === 'visual';
+    showDeleted.parentElement.hidden = view !== 'visual';
+    if (view === 'visual') {
       if (!b.html) {
         output.replaceChildren(el('p', { class: 'muted' },
           'The visual view is available for the most recent versions only, and for pages read as HTML.'));
@@ -394,7 +400,7 @@ function historyView(history) {
       output.replaceChildren(frame);
       return;
     }
-    if (state.view === 'source') {
+    if (view === 'source') {
       if (!a.html || !b.html) {
         output.replaceChildren(el('p', { class: 'muted' },
           'The source view is available for the most recent versions only, and for pages read as HTML.'));
@@ -404,17 +410,39 @@ function historyView(history) {
         ...diffNodes(diffText(sourceLines(a.html), sourceLines(b.html)), onlyChanges.checked)));
       return;
     }
-    const lines = diffText(a.text, b.text);
-    if (state.view === 'side') {
-      output.replaceChildren(el('div', { class: 'side' },
-        el('div', { class: 'diff' }, ...sideNodes(lines, 'old', onlyChanges.checked)),
-        el('div', { class: 'diff' }, ...sideNodes(lines, 'new', onlyChanges.checked))));
+    const formats = typeof a.format === 'string' && typeof b.format === 'string';
+    if (view === 'format') {
+      if (!formats) {
+        output.replaceChildren(el('p', { class: 'muted' },
+          'Formatting is compared for versions saved while “Also watch formatting” is on, for pages read as HTML.'));
+        return;
+      }
+      output.replaceChildren(el('p', { class: 'hint' }, FORMAT_KEY),
+        el('div', { class: 'diff' }, ...diffNodes(diffText(a.format, b.format), onlyChanges.checked)));
       return;
     }
-    output.replaceChildren(el('div', { class: 'diff' }, ...diffNodes(lines, onlyChanges.checked)));
+    const lines = diffText(a.text, b.text);
+    // When only the formatting changed, the text view shows that instead of
+    // two identical texts.
+    if (view === 'text' && formats && a.text === b.text && a.format !== b.format) {
+      output.replaceChildren(el('p', { class: 'muted' }, 'The text is the same. Only the formatting changed:'),
+        el('p', { class: 'hint' }, FORMAT_KEY),
+        el('div', { class: 'diff' }, ...diffNodes(diffText(a.format, b.format), onlyChanges.checked)));
+      return;
+    }
+    const formatNote = formats && formatMarks(a.format) !== formatMarks(b.format)
+      ? el('p', { class: 'hint' }, 'The formatting changed too. See the Formatting tab.') : null;
+    if (view === 'side') {
+      output.replaceChildren(...[formatNote, el('div', { class: 'side' },
+        el('div', { class: 'diff' }, ...sideNodes(lines, 'old', onlyChanges.checked)),
+        el('div', { class: 'diff' }, ...sideNodes(lines, 'new', onlyChanges.checked)))].filter(Boolean));
+      return;
+    }
+    output.replaceChildren(...[formatNote, el('div', { class: 'diff' }, ...diffNodes(lines, onlyChanges.checked))].filter(Boolean));
   };
 
   for (const [key, label] of Object.entries(VIEWS)) {
+    if (key === 'format' && !hasFormats) continue;
     tabs.append(el('button', {
       dataset: { view: key },
       onclick: () => {
@@ -679,6 +707,7 @@ function watchForm(watch) {
     ignore: Object.fromEntries(['dates', 'numbers', 'case', 'whitespace', 'order'].map((k) => [k, el('input', { type: 'checkbox', checked: w.ignore?.[k] === true })])),
     ignoreLines: el('textarea', { rows: 2, placeholder: 'Last updated\n/^Visitors: \\d+$/' }),
     pauseAfterAlert: el('input', { type: 'checkbox', checked: w.pauseAfterAlert === true }),
+    watchFormatting: el('input', { type: 'checkbox', checked: w.watchFormatting === true }),
   };
   f.ignoreLines.value = (w.ignore?.lines || []).join('\n');
   const policy = state.policy;
@@ -877,6 +906,7 @@ function watchForm(watch) {
           lines: f.ignoreLines.value.split('\n').map((l) => l.trim()).filter(Boolean),
         },
         pauseAfterAlert: f.pauseAfterAlert.checked,
+        watchFormatting: f.watchFormatting.checked,
       };
       try {
         const { id } = await call(watch ? 'updateWatch' : 'createWatch', { watch: data });
@@ -921,7 +951,9 @@ function watchForm(watch) {
         el('label', {}, f.ignore.whitespace, 'Spacing'),
         el('label', {}, f.ignore.order, 'Order of lines'))),
     el('label', { class: 'field' }, el('span', {}, 'Ignore lines containing'), f.ignoreLines,
-      el('span', { class: 'hint' }, 'One per line, any case. Write /pattern/ for a regular expression. Matching lines still show in the history but never count as a change on their own.'))),
+      el('span', { class: 'hint' }, 'One per line, any case. Write /pattern/ for a regular expression. Matching lines still show in the history but never count as a change on their own.')),
+    el('label', { class: 'check' }, f.watchFormatting, el('span', {}, 'Also watch formatting',
+      el('div', { class: 'hint' }, 'Counts a change when text turns bold or italic, becomes a heading, list or table, or its links, colors or sizes change, even if the words stay the same. Only formatting written into the page counts, not its stylesheets. Not used with the regular expression filter, or for PDFs, JSON and feeds.')))),
   el('fieldset', {}, el('legend', {}, 'When to check'),
     el('div', { class: 'inline' }, f.scheduleType, f.every, f.unit, randomRow),
     sliderRow,
