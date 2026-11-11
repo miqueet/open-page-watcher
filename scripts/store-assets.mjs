@@ -24,6 +24,7 @@ fs.writeFileSync(path.join(extDir, 'manifest.json'), JSON.stringify(manifest));
 
 let price = '$1,299.00';
 let stock = 'Only 3 left in stock';
+let buyButton = '<button id="buy" class="buy">Add to cart</button>';
 let jobs = ['Senior Backend Engineer, Remote', 'Product Designer, Austin'];
 const page = (title, body) => `<!doctype html><html><head><title>${title}</title><style>
   body { font: 16px/1.5 system-ui, sans-serif; margin: 0; color: #1f2937; background: #f9fafb; }
@@ -39,6 +40,7 @@ const server = http.createServer((req, res) => {
     return res.end(page('UltraBook 14 Pro', `<header>Example Store</header><main>
       <h1>UltraBook 14 Pro</h1><p>14-inch, 32 GB RAM, 1 TB SSD</p>
       <div class="price" id="price">${price}</div><p id="stock">${stock}</p>
+      <div id="cart">${buyButton}</div>
       <p>Free shipping. 30-day returns.</p></main>`));
   }
   if (req.url === '/careers') {
@@ -146,6 +148,21 @@ try {
   await inbox.waitForSelector('form');
   await inbox.waitForTimeout(300);
   await inbox.screenshot({ path: path.join(out, 'screenshot-4-alerts.png') });
+
+  // An HTML-only change: the button text stays the same, but it is disabled.
+  const { id: cart } = await send({ type: 'createWatch', watch: {
+    url: `${shopBase}/laptop`, name: 'UltraBook 14 Pro cart button', selectors: [{ type: 'css', expr: '#cart' }],
+    watchHtml: true, intervalMinutes: 15,
+  } });
+  const versions = async (id) => inbox.evaluate(async (key) => ((await chrome.storage.local.get(key))[key] || []).length, `history:${cart}`);
+  for (let i = 0; i < 100 && (await versions(cart)) < 1; i++) await inbox.waitForTimeout(100);
+  buyButton = '<button id="buy" class="buy sold-out" disabled>Add to cart</button>';
+  await check(cart);
+  await inbox.evaluate((id) => { location.hash = `#/w/${id}`; }, cart);
+  await inbox.click('.tabs button[data-view="html"]');
+  await inbox.waitForSelector('.diff ins');
+  await inbox.waitForTimeout(300);
+  await inbox.screenshot({ path: path.join(out, 'screenshot-5-html.png') });
 } finally {
   await context.close();
   server.close();
