@@ -85,8 +85,9 @@ The inbox is where everything else happens. It has:
   add or remove a label, or delete them together.
 - **Add watch** and **Add several** buttons. See [Adding several pages at
   once](#adding-several-pages-at-once).
-- **Settings**: alert summaries, quiet hours, failure alerts, backups and the
-  About section.
+- **Mark all read**, **Export** and **Import** (backups).
+- **Settings**: alert summaries, quiet hours, failure alerts, keyboard shortcuts
+  and the About section.
 
 Clicking a watch shows its history and comparison views. See
 [Reviewing changes](reviewing-changes.md).

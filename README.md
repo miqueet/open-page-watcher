@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="store/promo-marquee-1400x560.png" alt="Open Page Watcher: private, open-source change alerts" width="700">
+</p>
+
 # Open Page Watcher
 
 A privacy- and security-first Chrome extension that watches web pages for
@@ -7,6 +11,18 @@ your computer: no servers, no accounts and no data collection of any kind.
 **[Read the documentation](docs/README.md)** · **[Examples and use cases](docs/examples.md)** ·
 [Selectors](docs/selectors.md) · [Regex](docs/regex.md) · [Alert rules](docs/alerts.md) ·
 [Troubleshooting](docs/troubleshooting.md)
+
+<p align="center">
+  <img src="store/screenshot-1-inbox.png" alt="The inbox: a watch on a laptop's price with a chart of the price over time and the latest change highlighted" width="820">
+</p>
+
+## Screenshots
+
+| Pick the parts of a page to watch | Choose what to watch and when to alert |
+| --- | --- |
+| ![Clicking the price on a product page to watch just that part](store/screenshot-2-picker.png) | ![The watch editor with selectors, a regex filter and ignore options](store/screenshot-3-options.png) |
+| **Quiet hours, combined summaries and shortcuts** | |
+| ![Settings with combined alerts, quiet hours and keyboard shortcuts](store/screenshot-4-alerts.png) | |
 
 ## Private and local by design
 

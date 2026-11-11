@@ -135,7 +135,7 @@ Change `Alt+Shift+W` at `chrome://extensions/shortcuts`.
 
 ## Backups, import and export
 
-In **Settings**:
+Use the **Export** and **Import** buttons at the top of the inbox:
 
 - **Export** saves all your watches and settings to a file. Tick **Protect the
   file with a password** to encrypt it (AES-256-GCM, with a key made from your
