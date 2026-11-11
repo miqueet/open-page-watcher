@@ -6,7 +6,8 @@ changes also notify you. This page covers the rules, then how you're notified.
 - [How rules work](#how-rules-work)
 - [Which text a rule looks at](#which-text-a-rule-looks-at)
 - [Text rules](#text-rules)
-- [Number rules](#number-rules): "notify me when it's below $1,200"
+- [Number rules](#number-rules): "notify me when it's below $1,200", and
+  [Which number](#which-number)
 - [Change-size rules](#change-size-rules)
 - ["Doesn't match any earlier version"](#doesnt-match-any-earlier-version)
 - [Recipes](#recipes)
@@ -89,92 +90,134 @@ Examples:
 
 ## Number rules
 
-Number rules read the **first number** in the chosen text. Thousands separators
-and currency symbols are fine: `$1,299.99` is read as 1299.99, `-4.5%` as -4.5,
-`1,204 results` as 1204.
+Number rules read a number from the chosen text: the **first** number, or the
+one you point at with [Which number](#which-number). Prices, counts and scores
+in everyday formats are understood:
+
+| Text | Read as |
+| --- | --- |
+| `$1,299.99` | 1299.99 |
+| `1.299,00 €` | 1299 |
+| `12,50 €` | 12.5 |
+| `-4.5%` | -4.5 |
+| `1.2K followers` | 1200 |
+| `3.5M views` | 3500000 |
+| `1,204 results` | 1204 |
 
 | Rule | Value | Alerts when |
 | --- | --- | --- |
-| Number is less than | number | The number is below the value |
-| Number is more than | number | The number is above the value |
+| Number is less than | limit | The number is below the limit (every change while it's below) |
+| Number is more than | limit | The number is above the limit (every change while it's above) |
+| Number dropped below | limit | The number **crosses** below the limit: it was at or above it, and now it's below. Once. |
+| Number rose above | limit | The number crosses above the limit. Once. |
 | Number increased | | The new number is higher than the previous one |
 | Number decreased | | The new number is lower than the previous one |
-| Number increased by more than | number | It went up by more than this amount |
-| Number decreased by more than | number | It went down by more than this amount |
-| Number increased by more than % | number | It went up by more than this percentage |
-| Number decreased by more than % | number | It went down by more than this percentage |
+| Number increased by more than | amount | It went up by more than this amount |
+| Number decreased by more than | amount | It went down by more than this amount |
+| Number increased by more than % | percent | It went up by more than this percentage |
+| Number decreased by more than % | percent | It went down by more than this percentage |
 
-"Less than" and "more than" read the number from the text you choose (usually
-*new text*). The increase and decrease rules always compare the first number
-of the previous version with the first number of the new one.
+**Typing a limit.** Write it the way you'd say it: `1200`, `$1,200`,
+`1200 dollars`, `1,200.50` and `1.2k` all work. Whatever you type is also
+used in the notification, so `$1,200` reads "now below $1,200".
+
+"Less than", "more than" and the crossing rules read the number from the text
+you choose (usually *new text*). The crossing, increase and decrease rules
+compare the previous version's number with the new one's.
 
 ### "Notify me when the price is below $1,200"
 
-1. Watch only the price. Use the picker on the price, or a selector such as
+1. Watch the price. Use the picker on the price, or a selector such as
    `.price` or `[itemprop="price"]`. (See [Selectors](selectors.md).)
-2. Under **Alerts**, add the rule *New text* **Number is less than** `1200`.
+2. Under **Alerts**, click **+ Add rule** and choose *New text* **Number
+   dropped below**, value `$1,200`.
 3. Save.
 
-| Price goes | Alert? | Notification |
+| Price goes | Number dropped below `$1,200` | Number is less than `$1,200` |
 | --- | --- | --- |
-| $1,299 → $1,249 | No (still 1200 or more) | |
-| $1,249 → $1,199 | **Yes** | "Went down from $1,249 to $1,199 (−4.0%)" |
-| $1,199 → $1,150 | **Yes** (still below, and it changed) | "Went down from $1,199 to $1,150 (−4.1%)" |
-| $1,150 → $1,150 | No (no change) | |
-| $1,150 → $1,250 | No | |
+| $1,299 → $1,249 | No | No |
+| $1,249 → $1,199 | **Yes**: "Went down from $1,249 to $1,199 (−4.0%), now below $1,200" | **Yes** |
+| $1,199 → $1,150 | No (it was already below) | **Yes** (still below, and it changed) |
+| $1,150 → $1,250 | No | No |
+| $1,250 → $1,180 | **Yes** (it crossed again) | **Yes** |
 
-To be told only the first time it drops below, also tick
-[Pause after the first alert](#pause-after-the-first-alert). To be told only when
-it keeps getting cheaper while below, use **all** of:
+So:
 
-- *New text* **Number is less than** `1200`
-- *New text* **Number decreased**
+- **Number dropped below** tells you once each time it goes under your limit.
+  Best for "tell me when it's cheap enough".
+- **Number is less than** tells you about every change while it's under the
+  limit. Best when you also want to hear about further drops.
+- Tick [Pause after the first alert](#pause-after-the-first-alert) too if you
+  only ever want to hear once.
 
-The same pattern works the other way: **Number is more than** `100` for "alert
-me when the queue has more than 100 tickets", or "when the stock price goes
-above 250".
+The same pattern works the other way: **Number rose above** `100` for "alert me
+when the queue goes over 100 tickets", or "when the share price rises above
+250".
+
+### Which number
+
+Every number rule has an optional **Which number** box. Leave it empty to use
+the first number in the text. Or type a [regular expression](regex.md#4-which-number)
+that finds the number you want: the first group `( )` is read, or the whole
+match if it has no group. It ignores case, and `^`/`$` match each line.
+
+With the watched text
+
+```
+Only 3 left
+Price: $1,299
+Was $1,499
+```
+
+| Which number | Reads | Why |
+| --- | --- | --- |
+| (empty) | 3 | The first number in the text |
+| `Price:\s*(\S+)` | 1299 | What follows "Price:" |
+| `\$(\S+)` | 1299 | The first amount after a `$` |
+| `was\s*(\S+)` | 1499 | The old price (any case) |
+| `(\d+) left` | 3 | The stock count |
+
+The notification follows the same number: "Went down from $1,299 to $1,199
+(−7.7%), now below $1,200", not a change in the stock count. If several rules
+have a Which number, the notification and the chart use the first one.
 
 ### Making sure the right number is read
 
-The rule uses the **first** number in the text, so the watched text should start
-with the number you care about. With the text
+If the number rule reads the wrong number, any of these fixes it:
 
-```
-Only 3 left at $1,299
-```
-
-the first number is `3`. Fix it one of these ways:
-
-- **Select just the price** element instead of the whole box.
-- **Keep only the price** with the [regex filter](regex.md#1-keep-only-text-matching)
-  `\$[\d,.]+`. The watched text becomes `$1,299`.
-- **Keep only the number you want** with a group: `at \$([\d,.]+)` keeps
-  `1,299`.
-- **Read a machine-readable attribute** if the site has one:
+- **Which number:** point the rule at it, as above. Easiest.
+- **Select just the number** on the page instead of the whole box.
+- **Keep only the number** with the [regex filter](regex.md#1-keep-only-text-matching),
+  for example `\$[\d,.]+`. This also changes what's saved.
+- **Read a machine-readable attribute**, if the site has one:
   `[itemprop="price"] @content` often gives a clean `1299.00`.
 
-Number formats that use a dot for thousands and a comma for decimals
-(`1.299,00 €`) are read up to the comma: `1.299`. Either read a
-machine-readable attribute as above, or keep the threshold in the same form
-(less than `1.2` means less than 1.200 €) as long as the site always shows
-thousands.
+Things to know:
+
+- Dates and times are numbers too: in "Updated 11:42 · $1,299" the first
+  number is 11. Use Which number or leave the date out.
+- Thousands separated by spaces (`1 299 €`) read as 1. Use Which number with
+  a regex that skips the space, or read a machine-readable attribute.
+- Version numbers read as their first two parts: `4.2.1` is 4.2.
 
 ### More number examples
 
 | Goal | What to watch | Rule |
 | --- | --- | --- |
-| Price below $1,200 | `.price` | *New text* number is less than `1200` |
+| Price under $1,200, once | `.price` | number dropped below `$1,200` |
 | Price drops at all | `.price` | number decreased |
 | Price drops by more than $50 | `.price` | number decreased by more than `50` |
 | Price drops by more than 10% | `.price` | number decreased by more than % `10` |
-| Stock under 5 | keep only `(\d+) left` | *New text* number is less than `5` |
-| Search results above 1,000 | keep only `([\d,]+) results` | *New text* number is more than `1000` |
+| Stock under 5 | the product box | number dropped below `5`, which number `(\d+) left` |
+| Search results above 1,000 | the results header | number rose above `1k`, which number `([\d,]+) results` |
+| Followers pass 10,000 | the profile header | number rose above `10k`, which number `([\d.,]+[KM]?) followers` |
 | API latency jumps 50% | `json:$.p95_ms` | number increased by more than % `50` |
-| Exchange rate above 1.10 | `.rate` | *New text* number is more than `1.10` |
-| Temperature below freezing | `.temp` | *New text* number is less than `0` |
+| Exchange rate above 1.10 | `.rate` | number rose above `1.10` |
+| Temperature below freezing | `.temp` | number dropped below `0` |
 
-The watch page also shows a **chart** of the first number in each saved version,
-so you can see the trend; see [Reviewing changes](reviewing-changes.md#the-number-chart).
+The watch page also shows a **chart** of the number in each saved version (the
+one Which number points at, if set), so you can see the trend; see
+[Reviewing changes](reviewing-changes.md#the-number-chart).
 
 ## Change-size rules
 
@@ -210,7 +253,7 @@ to 200).
 | Goal | Match | Rules |
 | --- | --- | --- |
 | Restock | all | *New text* contains `in stock` |
-| Back in stock and under $100 | all | Watch `.price` then `.stock` (price first, so it's the first number); *new text* contains `in stock`; *new text* number is less than `100` |
+| Back in stock and under $100 | all | Watch the product box; *new text* contains `in stock`; *new text* number is less than `$100`, which number `\$(\S+)` |
 | New job mentioning remote | all | *Added text* is not empty; *added text* contains `remote` |
 | Any new job in London or Remote | all | *Added text* matches regex `london\|remote` |
 | Something removed from a list | all | *Deleted text* is not empty |
@@ -226,11 +269,14 @@ Under **Alerts** in the editor:
 - **Desktop notification** (on by default). The title is the watch's name, and
   the message says what changed, in plain words:
   - A number changed: "Went down from $1,299 to $1,199 (−7.7%)" or
-    "Went up from 12 to 15 (+25.0%)"
+    "Went up from 12 to 15 (+25.0%)", plus ", now below $1,200" when a limit in
+    your rules was passed
   - Text was added: "Added: In stock"
   - Text was removed: "Removed: Size 10"
   - Text was replaced: "Now: Open · Was: Closed"
   - Formatting only: "Formatting changed: bold, color" and so on
+  - HTML only: "HTML changed: <button> gained disabled"
+  - Screenshot only: "Looks different: 4% of the screenshot changed."
 
   Clicking the notification opens the watch in the inbox.
 - The toolbar icon shows a **badge** with the number of unread watches.

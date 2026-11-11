@@ -268,8 +268,9 @@ Notes:
 
 - Attribute names are case-insensitive in HTML (`@HREF` = `@href`).
 - An attribute that is missing or empty gives no text. Attributes with no
-  value, such as `disabled`, always read as empty, so watch the element's text
-  instead.
+  value, such as `disabled`, always read as empty. To notice those, watch the
+  element with **Also watch the HTML** on; see
+  [HTML and visual changes](html-and-visual-changes.md).
 - With the `@name` ending, relative addresses in `href`, `src` and similar are
   made into full addresses. XPath's own `/@href` returns the attribute exactly
   as written.

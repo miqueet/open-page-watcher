@@ -69,9 +69,10 @@ page".
 
 ## "The number alert reads the wrong number"
 
-Number rules and the chart use the first number in the watched text. Make the
-price the first thing in the text (select just it, or use the regex filter).
-See [Making sure the right number is read](alerts.md#making-sure-the-right-number-is-read).
+Number rules and the chart use the first number in the watched text unless the
+rule's **Which number** box says otherwise. Type a regex there that finds the
+number, such as `Price:\s*(\S+)`, or select just the number on the page.
+See [Which number](alerts.md#which-number).
 
 ## "Checks stopped while my computer was asleep"
 

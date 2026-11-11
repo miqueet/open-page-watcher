@@ -83,8 +83,15 @@ only for the comparison. The saved version always keeps the real text, so the
 history shows what the page actually said.
 
 If the texts are the same after that, the check ends here: "no change", nothing
-saved, no alert. If "Also watch formatting" is on, the
-[formatting](formatting.md) is compared too, and a formatting-only change counts.
+saved, no alert, unless one of the optional comparisons finds a difference:
+
+- **Also watch formatting:** bold, headings, links and inline colors
+  ([Formatting changes](formatting.md)).
+- **Also watch the HTML:** elements and attributes, such as a button becoming
+  `disabled` or an image's address changing
+  ([HTML and visual changes](html-and-visual-changes.md)).
+- **Also compare screenshots:** what the watched part looks like, in a hidden
+  window ([HTML and visual changes](html-and-visual-changes.md#also-compare-screenshots)).
 
 The very first check of a watch has nothing to compare with, so it just saves
 the starting version.

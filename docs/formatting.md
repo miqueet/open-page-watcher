@@ -33,11 +33,14 @@ marks are compared too.
 
 - **Stylesheets and class names.** A site that turns text red with
   `class="text-danger"` and a stylesheet isn't seen, only inline styles and
-  formatting tags are. Sites rename their classes and change their themes all
+  formatting tags are. To catch class changes, use **Also watch the HTML**;
+  to catch stylesheet colors, **Also compare screenshots** (see
+  [HTML and visual changes](html-and-visual-changes.md)). Sites rename their classes and change their themes all
   the time, so watching them would mean constant false alerts. Also, a
   downloaded page has no styles applied.
 - **Pixel-level appearance.** This isn't a screenshot comparison. Fonts,
-  layout, images and positions aren't compared.
+  layout, images and positions aren't compared. For those, see
+  [HTML and visual changes](html-and-visual-changes.md).
 - It isn't used together with the regex filter or `@attribute` selectors (they
   produce bare values), or for PDFs, JSON and feeds (they have no formatting).
 - Versions saved before you turned it on have no formatting, so the first

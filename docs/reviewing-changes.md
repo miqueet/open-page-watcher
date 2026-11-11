@@ -43,6 +43,8 @@ last two), then a view:
 | Text | One column; removed text struck through in red, added text in green, word by word inside changed lines | Most changes |
 | Side by side | Old on the left, new on the right, changed lines lined up | Long pages, many changes |
 | Formatting | The text with formatting marks (`**bold**`, `# heading`, `[link](address)`…) | Watches with [formatting](formatting.md) on |
+| HTML | One line per element, with changed attributes highlighted | Watches with [Also watch the HTML](html-and-visual-changes.md#also-watch-the-html) on |
+| Screenshot | The older and newer pictures side by side, changed areas outlined in red | Watches with [Also compare screenshots](html-and-visual-changes.md#also-compare-screenshots) on |
 | Visual | A safe snapshot of the selected part of the page as it looked, with changes highlighted | Tables, layouts, seeing context |
 | Source | The saved HTML, line by line | Checking what the markup was |
 
