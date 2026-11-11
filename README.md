@@ -172,6 +172,14 @@ need a server, an account or sending your data anywhere are not, for the reasons
 above. Found a bug? [Open an issue](https://github.com/miqueet/open-page-watcher/issues/new).
 Security problems go through [SECURITY.md](SECURITY.md) instead.
 
+## Support the developer
+
+If you would like to support the developer, please feel free to donate here:
+
+Bitcoin (BTC): `bc1qgkla5xl804l78dmukx80zerepgkxndmtk0pach`
+
+The same address is in the extension under **Settings → About**, with a Copy button.
+
 ## Privacy
 
 Nothing leaves your browser. See [PRIVACY.md](PRIVACY.md).

@@ -17,11 +17,14 @@ jobs:
       - name: Manifest is valid and its files exist
         run: node scripts/check-package.mjs .
   browser:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Playwright 1.56 can't install Chromium on ubuntu-latest (26.04)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install --no-save playwright@1.56.1 && npx playwright install --with-deps chromium
+      - run: npm install --no-save playwright@1.56.1 && npx playwright install chromium
+      # The runner image already has Chromium's libraries; the extra fonts are nice to have,
+      # so a broken apt mirror shouldn't fail the job.
+      - run: npx playwright install-deps chromium || echo "::warning::Could not install extra system packages; continuing"
       - run: node test/e2e.mjs
