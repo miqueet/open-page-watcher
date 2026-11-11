@@ -1208,7 +1208,7 @@ try {
       }), first.shot);
       assert.ok(size[0] >= 300 && size[0] <= 340 && size[1] >= 120 && size[1] <= 160, `cropped to the watched part: ${size}`);
       await sendTo({ type: 'checkNow', id });
-      assert.equal((await historyOf(id)).length, 1, 'the same picture is not a change');
+      assert.equal((await historyOf(id)).length, 1, `the same picture is not a change: ${(await watchIn(id)).lastSummary}`);
       shotColor = 'red';
       await sendTo({ type: 'checkNow', id });
       const h = await historyOf(id);

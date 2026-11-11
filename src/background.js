@@ -524,8 +524,16 @@ const MAX_SHOT_CHARS = 1024 * 1024;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Scrolls the hidden tab so the watched parts are in view and returns where
-// they are, in CSS pixels of the viewport. Injected, so self-contained.
-function screenshotArea(selectors) {
+// they are, in CSS pixels of the viewport, once web fonts and images in view
+// have loaded (otherwise the same page can look different from one check to
+// the next). Injected, so self-contained.
+async function screenshotArea(selectors) {
+  const settle = (p) => Promise.race([p, new Promise((r) => setTimeout(r, 3000))]);
+  try {
+    await settle(document.fonts && document.fonts.ready);
+  } catch {
+    // no font loading API
+  }
   const rects = [];
   for (const sel of selectors) {
     let nodes = [];
@@ -544,6 +552,12 @@ function screenshotArea(selectors) {
       if (r.width > 0 && r.height > 0) rects.push({ top: r.top + scrollY, left: r.left + scrollX, bottom: r.bottom + scrollY, right: r.right + scrollX });
     }
   }
+  const images = Array.from(document.images).filter((img) => !img.complete);
+  await settle(Promise.all(images.map((img) => new Promise((r) => {
+    img.addEventListener('load', r, { once: true });
+    img.addEventListener('error', r, { once: true });
+  }))));
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   const view = { vw: innerWidth, vh: innerHeight };
   if (!rects.length) {
     scrollTo({ top: 0, left: 0, behavior: 'instant' });
@@ -588,8 +602,11 @@ async function takeScreenshot(windowId, tabId, watch) {
   const sy = Math.round(area.y * scale);
   const sw = Math.max(1, Math.min(shot.width - sx, Math.round(area.w * scale)));
   const sh = Math.max(1, Math.min(shot.height - sy, Math.round(area.h * scale)));
-  const k = Math.min(1, MAX_SHOT_WIDTH / sw, MAX_SHOT_HEIGHT / sh);
-  const canvas = new OffscreenCanvas(Math.max(1, Math.round(sw * k)), Math.max(1, Math.round(sh * k)));
+  // Saved at the area's size in CSS pixels, whatever resolution Chrome
+  // captured at (it varies, e.g. for minimized windows), so two checks of the
+  // same page always give pictures of the same size.
+  const k = Math.min(1, MAX_SHOT_WIDTH / area.w, MAX_SHOT_HEIGHT / area.h);
+  const canvas = new OffscreenCanvas(Math.max(1, Math.round(area.w * k)), Math.max(1, Math.round(area.h * k)));
   canvas.getContext('2d').drawImage(shot, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
   shot.close();
   const blob = await canvas.convertToBlob({ type: 'image/webp', quality: 0.85 });
