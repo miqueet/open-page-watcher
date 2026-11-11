@@ -1,8 +1,28 @@
+<p align="center">
+  <img src="store/promo-marquee-1400x560.png" alt="Open Page Watcher: private, open-source change alerts" width="700">
+</p>
+
 # Open Page Watcher
 
 A privacy- and security-first Chrome extension that watches web pages for
 changes and alerts you, similar to other popular web monitors. Everything happens on
 your computer: no servers, no accounts and no data collection of any kind.
+
+**[Read the documentation](docs/README.md)** · **[Examples and use cases](docs/examples.md)** ·
+[Selectors](docs/selectors.md) · [Regex](docs/regex.md) · [Alert rules](docs/alerts.md) ·
+[Troubleshooting](docs/troubleshooting.md)
+
+<p align="center">
+  <img src="store/screenshot-1-inbox.png" alt="The inbox: a watch on a laptop's price with a chart of the price over time and the latest change highlighted" width="820">
+</p>
+
+## Screenshots
+
+| Pick the parts of a page to watch | Choose what to watch and when to alert |
+| --- | --- |
+| ![Clicking the price on a product page to watch just that part](store/screenshot-2-picker.png) | ![The watch editor with selectors, a regex filter and ignore options](store/screenshot-3-options.png) |
+| **Quiet hours, combined summaries and shortcuts** | |
+| ![Settings with combined alerts, quiet hours and keyboard shortcuts](store/screenshot-4-alerts.png) | |
 
 ## Private and local by design
 
@@ -111,9 +131,8 @@ from any other proprietary extension.
 - IT teams can limit sites, intervals and options through Chrome policy (see
   [docs/enterprise.md](docs/enterprise.md))
 
-See [docs/SPEC.md](docs/SPEC.md) for how this maps to Distill's and other
-monitors' features, what is
-deliberately left out, and the full security model.
+See [docs/SPEC.md](docs/SPEC.md) for how this compares with other monitors'
+features, what is deliberately left out, and the full security model.
 
 ## Install
 
@@ -144,6 +163,28 @@ team can review this repository and publish it internally or allow-list it.
 - Open the inbox from the popup to see changes, edit how often a page is
   checked, set alert conditions, or choose what happens when a page asks you to
   sign in.
+
+New to it? [Getting started](docs/getting-started.md) walks through all of this,
+and [Examples and use cases](docs/examples.md) has ready-made recipes.
+
+## Documentation
+
+The [docs folder](docs/README.md) explains how everything works, with worked
+examples you can copy into the watch editor:
+
+| Guide | Covers |
+| --- | --- |
+| [Getting started](docs/getting-started.md) | Installing, your first watch, the popup, inbox and editor |
+| [How it works](docs/how-it-works.md) | What happens during a check, step by step |
+| [Selectors](docs/selectors.md) | The picker, CSS, XPath, attributes, "Leave out" and JSON paths, with a cheat sheet |
+| [Regular expressions](docs/regex.md) | The three places regex is used, with a cheat sheet and examples |
+| [Alert rules and notifications](docs/alerts.md) | Every rule, including "notify me when the price is below $1,200", sounds and spoken alerts |
+| [Ignoring noise](docs/ignoring-noise.md) | Ignoring dates, numbers, case, spacing, line order and lines |
+| [Loading pages](docs/loading-pages.md) | Download vs. hidden tab vs. live mode, sign-ins, PDFs, feeds, JSON |
+| [Formatting changes](docs/formatting.md) | Alerts when text turns bold, becomes a heading or changes color |
+| [Reviewing changes](docs/reviewing-changes.md) | Comparison views, the number chart, CSV export, backups, shortcuts |
+| [Examples and use cases](docs/examples.md) | 20 step-by-step recipes: prices, restocks, status pages, releases, jobs, policies, APIs |
+| [Troubleshooting](docs/troubleshooting.md) | What every error means and how to fix it |
 
 ## Permissions
 
