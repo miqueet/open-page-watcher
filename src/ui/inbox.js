@@ -206,7 +206,7 @@ function scriptsNeededBanner(watch) {
 async function renderDetail() {
   const { id, edit, isNew, settings, isNewMany } = route();
   const detail = $('detail');
-  if (settings) return detail.replaceChildren(await settingsForm());
+  if (settings) return detail.replaceChildren(await settingsForm(), aboutSection());
   if (isNew) return detail.replaceChildren(watchForm(null));
   if (isNewMany) return detail.replaceChildren(addManyForm());
   const watch = state.watches.find((w) => w.id === id);
@@ -1142,6 +1142,36 @@ async function settingsForm() {
     el('label', { class: 'check' }, enabled, el('span', {}, 'Notify me when a watch keeps failing')),
     el('div', { class: 'inline' }, 'After', after, 'failed checks in a row, at most every', every, 'minutes')),
   el('div', { class: 'row' }, el('button', { class: 'primary', type: 'submit' }, 'Save')));
+}
+
+// About
+
+const DONATION_BTC = 'bc1qgkla5xl804l78dmukx80zerepgkxndmtk0pach';
+
+function aboutSection() {
+  const address = el('input', {
+    type: 'text', readOnly: true, value: DONATION_BTC, class: 'btc-address',
+    spellcheck: 'false', 'aria-label': 'Bitcoin address',
+    onfocus: (e) => e.target.select(),
+  });
+  const copy = el('button', {
+    type: 'button',
+    onclick: async () => {
+      try {
+        await navigator.clipboard.writeText(DONATION_BTC);
+        toast('Bitcoin address copied.');
+      } catch {
+        address.focus();
+        address.select();
+        toast('Press Ctrl+C (or Cmd+C) to copy the selected address.');
+      }
+    },
+  }, 'Copy');
+  return el('section', { id: 'about', class: 'about' },
+    el('h2', {}, 'About'),
+    el('p', {}, `Open Page Watcher ${chrome.runtime.getManifest().version}. Free and open source under the MIT license.`),
+    el('p', {}, 'If you would like to support the developer, please feel free to donate here:'),
+    el('div', { class: 'inline' }, el('span', {}, 'Bitcoin (BTC)'), address, copy));
 }
 
 // ---------------------------------------------------------------------------

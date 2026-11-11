@@ -105,3 +105,8 @@ table.shortcuts td:first-child { padding-right: 24px; }
 .banner { flex-wrap: wrap; }
 .banner > span { flex: 1 1 260px; }
 .sound-choice { margin-left: 24px; }
+.about { max-width: 720px; margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--border); }
+.about h2 { font-size: 17px; margin: 0 0 8px; }
+.about p { margin: 0 0 8px; }
+.about .inline { flex-wrap: wrap; }
+.btc-address { flex: 1 1 320px; min-width: 0; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
