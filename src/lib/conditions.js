@@ -1,7 +1,9 @@
 import { diffText } from './diff.js';
+import { numberIn, parseThreshold } from './numbers.js';
 
 // Rule types. `value` says what the value input means ('text', 'number',
-// 'regex' or false for none); `numeric` rules read the first number found.
+// 'regex' or false for none); `numeric` rules read the first number found,
+// or the number a rule's optional `find` regex points at.
 export const RULE_TYPES = {
   any: { label: 'Anything changed', value: false },
   contains: { label: 'Contains', value: 'text' },
@@ -19,12 +21,14 @@ export const RULE_TYPES = {
   changedPctAbove: { label: 'Lines changed is more than %', value: 'number', size: true },
   numberBelow: { label: 'Number is less than', value: 'number', numeric: true },
   numberAbove: { label: 'Number is more than', value: 'number', numeric: true },
-  numberIncreased: { label: 'Number increased', value: false, numeric: true },
-  numberDecreased: { label: 'Number decreased', value: false, numeric: true },
-  numberIncreasedBy: { label: 'Number increased by more than', value: 'number', numeric: true },
-  numberDecreasedBy: { label: 'Number decreased by more than', value: 'number', numeric: true },
-  numberIncreasedPct: { label: 'Number increased by more than %', value: 'number', numeric: true },
-  numberDecreasedPct: { label: 'Number decreased by more than %', value: 'number', numeric: true },
+  numberCrossedBelow: { label: 'Number dropped below', value: 'number', numeric: true, compares: true },
+  numberCrossedAbove: { label: 'Number rose above', value: 'number', numeric: true, compares: true },
+  numberIncreased: { label: 'Number increased', value: false, numeric: true, compares: true },
+  numberDecreased: { label: 'Number decreased', value: false, numeric: true, compares: true },
+  numberIncreasedBy: { label: 'Number increased by more than', value: 'number', numeric: true, compares: true },
+  numberDecreasedBy: { label: 'Number decreased by more than', value: 'number', numeric: true, compares: true },
+  numberIncreasedPct: { label: 'Number increased by more than %', value: 'number', numeric: true, compares: true },
+  numberDecreasedPct: { label: 'Number decreased by more than %', value: 'number', numeric: true, compares: true },
 };
 
 // Which text a rule looks at.
@@ -35,13 +39,10 @@ export const RULE_SOURCES = {
   previous: 'Previous text',
 };
 
-// Finds the first number in the text, tolerating thousands separators and
-// currency symbols, e.g. "$1,299.99" -> 1299.99.
+// The first number in the text, tolerating thousands separators, decimal
+// commas and currency symbols, e.g. "$1,299.99" -> 1299.99. See numbers.js.
 export function firstNumber(text) {
-  const match = /-?\d[\d,]*(?:\.\d+)?/.exec(text || '');
-  if (!match) return null;
-  const n = Number(match[0].replace(/,/g, ''));
-  return Number.isFinite(n) ? n : null;
+  return numberIn(text);
 }
 
 // Runs of changed words in a modified line. A run carries on across spaces
@@ -97,11 +98,15 @@ export function normalizeCondition(condition) {
       rules: condition.rules
         .filter((r) => r && RULE_TYPES[r.type])
         .slice(0, 20)
-        .map((r) => ({
-          type: r.type,
-          value: typeof r.value === 'string' ? r.value.slice(0, 2000) : '',
-          on: RULE_SOURCES[r.on] ? r.on : 'text',
-        })),
+        .map((r) => {
+          const rule = {
+            type: r.type,
+            value: typeof r.value === 'string' ? r.value.slice(0, 2000) : '',
+            on: RULE_SOURCES[r.on] ? r.on : 'text',
+          };
+          if (RULE_TYPES[r.type].numeric && typeof r.find === 'string' && r.find.trim()) rule.find = r.find.slice(0, 500);
+          return rule;
+        }),
     };
   }
   const type = condition?.type;
@@ -112,6 +117,11 @@ export function normalizeCondition(condition) {
     return { match: 'all', rules: [{ type, value: String(condition.value ?? ''), on: 'text' }] };
   }
   return { match: 'all', rules: [] };
+}
+
+// A rule's number value. Empty counts as 0, as it always has.
+function limitOf(value) {
+  return String(value ?? '').trim() === '' ? 0 : parseThreshold(value);
 }
 
 function ruleMet(rule, ctx) {
@@ -129,8 +139,8 @@ function ruleMet(rule, ctx) {
     case 'endsWith': return lower(text.trim()).endsWith(lower(value));
     case 'empty': return text.trim() === '';
     case 'notEmpty': return text.trim() !== '';
-    case 'lengthBelow': return text.length < Number(value);
-    case 'lengthAbove': return text.length > Number(value);
+    case 'lengthBelow': return text.length < limitOf(value);
+    case 'lengthAbove': return text.length > limitOf(value);
     case 'regex':
     case 'notRegex': {
       let re;
@@ -142,23 +152,29 @@ function ruleMet(rule, ctx) {
       return re.test(text) === (rule.type === 'regex');
     }
     case 'neverSeen': return !ctx.earlierTexts.includes(ctx.newText);
-    case 'changedLinesAbove': return ctx.size().lines > Number(value);
-    case 'changedPctAbove': return ctx.size().pct > Number(value);
+    case 'changedLinesAbove': return ctx.size().lines > limitOf(value);
+    case 'changedPctAbove': return ctx.size().pct > limitOf(value);
     default: break;
   }
 
-  // "Number is less/more than" reads the first number in the chosen text.
-  // The increase/decrease rules always compare the previous version's first
-  // number with the new version's.
-  const n = Number(value);
+  // "Number is less/more than" reads the number in the chosen text. The
+  // other number rules compare the previous version's number with the new
+  // version's. The value can be typed as "1200", "$1,200" or "1200 dollars".
+  const n = limitOf(value);
+  const find = rule.find || '';
   if (rule.type === 'numberBelow' || rule.type === 'numberAbove') {
-    const x = firstNumber(text);
-    if (x === null) return false;
+    const x = numberIn(text, find);
+    if (x === null || Number.isNaN(n)) return false;
     return rule.type === 'numberBelow' ? x < n : x > n;
   }
-  const before = firstNumber(ctx.oldText);
-  const after = firstNumber(ctx.newText);
-  if (before === null || after === null) return false;
+  const before = numberIn(ctx.oldText, find);
+  const after = numberIn(ctx.newText, find);
+  if (after === null) return false;
+  // Crossing a limit: alerts once when the number goes past it, not on
+  // every change while it stays there. A number that just appeared counts.
+  if (rule.type === 'numberCrossedBelow') return !Number.isNaN(n) && after < n && (before === null || before >= n);
+  if (rule.type === 'numberCrossedAbove') return !Number.isNaN(n) && after > n && (before === null || before <= n);
+  if (before === null) return false;
   switch (rule.type) {
     case 'numberIncreased': return after > before;
     case 'numberDecreased': return after < before;
@@ -168,6 +184,21 @@ function ruleMet(rule, ctx) {
     case 'numberDecreasedPct': return before !== 0 && ((before - after) / Math.abs(before)) * 100 > n;
     default: return false;
   }
+}
+
+// What a watch's number rules point at, for alert wording and the chart:
+// the `find` regex of the first number rule that has one, and the limits
+// ("below $1,200") its rules set.
+export function numberFocus(condition) {
+  const rules = normalizeCondition(condition).rules.filter((r) => RULE_TYPES[r.type]?.numeric);
+  const limits = [];
+  for (const r of rules) {
+    const n = parseThreshold(r.value);
+    if (Number.isNaN(n)) continue;
+    if (r.type === 'numberBelow' || r.type === 'numberCrossedBelow') limits.push({ below: true, n, label: r.value.trim() });
+    if (r.type === 'numberAbove' || r.type === 'numberCrossedAbove') limits.push({ below: false, n, label: r.value.trim() });
+  }
+  return { find: rules.find((r) => r.find)?.find || '', limits, numeric: rules.length > 0 };
 }
 
 // Decides whether a detected change should alert the user.

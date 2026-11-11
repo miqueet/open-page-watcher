@@ -1,6 +1,6 @@
 import { extractText } from './lib/extract.js';
 import { formatChanged, summarizeFormat } from './lib/formatting.js';
-import { conditionMet, changedText } from './lib/conditions.js';
+import { conditionMet, changedText, numberFocus } from './lib/conditions.js';
 import { selectJson, jsonValuesText } from './lib/jsonpath.js';
 import { highlightChanges, HIGHLIGHT_CSS } from './lib/highlight.js';
 import {
@@ -275,7 +275,7 @@ async function record(watch, result, error, {
     });
   }
   const summary = previous && changed && !rebaseline
-    ? (formatOnly ? summarizeFormat(previous.format, result.format) : summarizeChange(previous.text, result.text))
+    ? (formatOnly ? summarizeFormat(previous.format, result.format) : summarizeChange(previous.text, result.text, 300, numberFocus(watch.condition)))
     : '';
   logEntry.alerted = alert;
   if (alert && watch.pauseAfterAlert) logEntry.note = 'Paused after this alert (“Pause after the first alert” is on)';

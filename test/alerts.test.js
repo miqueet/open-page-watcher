@@ -69,3 +69,13 @@ test('digestMessage lists the newest changes first', () => {
   assert.equal(many.title, '2 watches changed');
   assert.equal(many.message, 'News: Added: Hello\nShop: Went down');
 });
+
+test('summarizeChange names the limit and reads the number the rules point at', () => {
+  const limits = [{ below: true, n: 1200, label: '$1,200' }];
+  assert.equal(summarizeChange('$1,299', '$1,199', 300, { limits }), 'Went down from $1,299 to $1,199 (−7.7%), now below $1,200');
+  assert.equal(summarizeChange('$1,299', '$1,249', 300, { limits }), 'Went down from $1,299 to $1,249 (−3.8%)');
+  const page = (price) => `${'Lots of other text. '.repeat(20)}Rated 4.5\nPrice: ${price}`;
+  const focus = { find: 'Price:\\s*(\\S+)', limits };
+  assert.equal(summarizeChange(page('$1,299'), page('$1,199'), 300, focus), 'Went down from $1,299 to $1,199 (−7.7%), now below $1,200');
+  assert.equal(summarizeChange(page('Sold out'), page('$1,150'), 300, focus), 'Now $1,150');
+});
