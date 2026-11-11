@@ -169,7 +169,8 @@ and give a 👍 to the ones you want, which helps decide what comes next.
 
 Anything that keeps your data on your computer is in scope. Requests that would
 need a server, an account or sending your data anywhere are not, for the reasons
-above. Found a bug? [Open an issue](https://github.com/miqueet/open-page-watcher/issues/new).
+above. Found a bug? [Report it](https://github.com/miqueet/open-page-watcher/issues/new?template=bug_report.yml).
+The About section at the bottom of Settings links to both forms.
 Security problems go through [SECURITY.md](SECURITY.md) instead.
 
 ## Support the developer
