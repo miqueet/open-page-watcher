@@ -1,12 +1,15 @@
 # Open Page Watcher: feature and security spec
 
-This is a clean-room implementation. It was written from Distill Web Monitor's
-public store listing, public documentation and observable behaviour. No Distill
-code was copied, decompiled or consulted.
+This is a clean-room implementation, written from scratch from the public
+store listings, public documentation and observable behaviour of popular page
+monitors. No code from any other extension was copied, decompiled or consulted.
 
-## Features (parity with Distill's local monitors)
+For how to use each feature, with examples, see the
+[documentation](README.md).
 
-| Distill feature | Open Page Watcher |
+## Core features
+
+| Feature | Open Page Watcher |
 | --- | --- |
 | Watch a whole page | Yes, "Watch whole page" in the popup or the right-click menu |
 | Visual selector to watch parts of a page | Yes, click-to-select picker (multiple elements), with click-inside to exclude parts; reselect from the watch editor with current parts highlighted |
@@ -25,7 +28,7 @@ code was copied, decompiled or consulted.
 | Pause, check now, edit, duplicate, delete | Yes |
 | Import / export | JSON, optionally password protected |
 
-Features from other popular monitors (Visualping, Page Monitor,
+More features found in other popular monitors (Visualping, Page Monitor,
 changedetection.io), from their public listings and documentation:
 
 | Feature | Seen in | Open Page Watcher |
@@ -35,11 +38,11 @@ changedetection.io), from their public listings and documentation:
 | Ignore lines containing text | changedetection.io | Plain text (any case) or `/regex/`, per watch |
 | Ignore line order | changedetection.io (sort lines) | Yes |
 | Stop after a change | Visualping | "Pause after the first alert" |
-| Add many pages at once | Distill, Visualping, changedetection.io | "Add several": a list of addresses with shared labels and schedule |
-| Export change history | Distill, Visualping | Download a watch's versions as CSV (cells that a spreadsheet would run as formulas are escaped) |
+| Add many pages at once | Visualping, changedetection.io | "Add several": a list of addresses with shared labels and schedule |
+| Export change history | Visualping | Download a watch's versions as CSV (cells that a spreadsheet would run as formulas are escaped) |
 | Highlighted, visual and text comparisons | All of them | Yes (see above) |
 
-Additions that Distill doesn't have as local features:
+Additions that common monitors don't offer as local features:
 
 - Quiet hours, and combining alerts into one summary notification
 - Spotting pages that ask you to sign in, turning on cookies for the watch once
@@ -62,8 +65,8 @@ Additions that Distill doesn't have as local features:
 
 ## Deliberately left out
 
-These Distill features need data to leave your machine or a vendor account, so
-they are not included:
+These features, common in other monitors, need data to leave your machine or a
+vendor account, so they are not included:
 
 - Cloud monitors, account login and cross-device sync
 - Email, SMS, mobile push, Slack, Discord, Teams and webhook alerts
