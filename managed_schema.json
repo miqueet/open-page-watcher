@@ -32,6 +32,11 @@
       "description": "The extension never observes open tabs.",
       "type": "boolean"
     },
+    "disableScreenshots": {
+      "title": "Disable screenshot comparison",
+      "description": "Watches can't compare screenshots, so the extension never asks for access to all sites.",
+      "type": "boolean"
+    },
     "minIntervalMinutes": {
       "title": "Minimum check interval (minutes)",
       "type": "integer"

@@ -66,3 +66,13 @@ test('no-cookies policy also rules out render-in-tab', () => {
   assert.equal(w.sendCookies, false);
   assert.equal(w.autoCookies, false);
 });
+
+test('screenshots can be turned off by policy, and need the hidden window', () => {
+  const w = { url: 'https://a.example/', mode: 'tab', watchScreenshot: true };
+  assert.equal(applyPolicy(normalizePolicy({}), w).watchScreenshot, true);
+  const off = normalizePolicy({ disableScreenshots: true });
+  assert.equal(isManaged(off), true);
+  assert.equal(applyPolicy(off, w).watchScreenshot, false);
+  assert.equal(applyPolicy(normalizePolicy({ disableRenderInTab: true }), w).watchScreenshot, false);
+  assert.equal(applyPolicy(normalizePolicy({ disableCookies: true }), w).watchScreenshot, false);
+});

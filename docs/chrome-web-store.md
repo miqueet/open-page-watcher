@@ -83,6 +83,7 @@ Monitors web pages the user chooses and alerts them when the content changes.
 | `contextMenus` | Adds "Watch this page" and "Watch part of this page" to the right-click menu. |
 | `tts` | Reads a change aloud when the user turns that on for a watch. Only voices installed on the device are used. |
 | Host permissions (optional, `http://*/*`, `https://*/*`) | Requested at runtime for one site at a time, only when the user adds a watch for that site, so the extension can download that page. Released when the last watch on the site is deleted. |
+| Host permission (optional, `<all_urls>`) | Requested at runtime only when the user turns on screenshot comparison for a watch, because `chrome.tabs.captureVisibleTab` requires it. The extension only captures the hidden window it opened for that watch's page. Released as soon as no watch uses screenshots. |
 
 **Are you using remote code?** No. All code is in the package; there is no
 `eval`, no remote scripts and no external libraries.

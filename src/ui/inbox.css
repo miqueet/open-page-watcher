@@ -61,6 +61,8 @@ legend { font-weight: 600; padding: 0 4px; }
 .tabs button { border: none; border-radius: 0; padding: 4px 10px; }
 .tabs button.active { background: var(--accent); color: var(--accent-fg); }
 .side { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.shot { display: block; max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+figure { margin: 0; }
 .visual-frame { width: 100%; height: 60vh; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
 .rules { display: grid; gap: 6px; }
 .rule { display: grid; grid-template-columns: 140px 1fr 1fr auto; gap: 6px; }

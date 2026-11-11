@@ -20,9 +20,13 @@ export function hasAccess(url) {
   return chrome.permissions.contains({ origins: [originPattern(url)] });
 }
 
-// Must be called from a user gesture (a click handler).
-export function requestAccess(urls) {
+// Must be called from a user gesture (a click handler). With screenshots,
+// access to all sites is asked for in the same prompt: Chrome only lets an
+// extension screenshot a tab with that. It's given back when no watch takes
+// screenshots any more.
+export function requestAccess(urls, { screenshots = false } = {}) {
   const origins = [...new Set(urls.map(originPattern))];
+  if (screenshots) origins.push('<all_urls>');
   return chrome.permissions.request({ origins });
 }
 

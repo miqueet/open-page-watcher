@@ -3,6 +3,8 @@ import {
 } from './api.js';
 import { diffText } from '../lib/diff.js';
 import { formatMarks } from '../lib/formatting.js';
+import { markupLines, markupKey } from '../lib/markup.js';
+import { changedCells, sameShape } from '../lib/shots.js';
 import { RULE_TYPES, RULE_SOURCES, normalizeCondition } from '../lib/conditions.js';
 import { DEFAULT_INTERVAL_MINUTES, DEFAULT_HISTORY, SIGN_IN_ACTIONS, isHttpUrl } from '../lib/watch.js';
 import { getLog, getSettings, DIGEST_CHOICES } from '../lib/storage.js';
@@ -21,7 +23,7 @@ const state = {
   label: null,
   search: '',
   checked: new Set(), // watches ticked for bulk actions
-  view: 'text', // text | side | format | visual | source
+  view: 'text', // text | side | format | visual | source | html | shot
   showDeleted: false,
   policy: null, // organization policy from managed storage
   picking: null, // token of a "Pick on page" the open form is waiting for
@@ -325,7 +327,7 @@ async function renderDetail() {
         },
       }, 'Delete')),
     numberView(watch, history),
-    historyView(history),
+    historyView(history, watch),
     logView(log),
   ].filter(Boolean));
 }
@@ -341,12 +343,53 @@ function versionLabel(entry, i) {
   return `Version ${i + 1} · ${new Date(entry.t).toLocaleString()}`;
 }
 
-const VIEWS = { text: 'Text', side: 'Side by side', format: 'Formatting', visual: 'Visual', source: 'Source' };
+const VIEWS = {
+  text: 'Text', side: 'Side by side', format: 'Formatting', html: 'HTML', shot: 'Screenshot', visual: 'Visual', source: 'Source',
+};
 
 // How to read the marks in the formatting view.
 const FORMAT_KEY = 'Formatting is shown with marks: # heading, - list item, > quote, | table cell, **bold**, _italic_, ~~struck through~~, `code`, [link text](address), and {color: red}…{/color} style marks for colors, sizes, underlines, highlights and hidden text.';
 
-function historyView(history) {
+// Before and after screenshots, with the parts that changed outlined on the after one.
+function screenshotView(a, b) {
+  const before = el('img', { class: 'shot', alt: 'Screenshot of the older version', src: a.shot });
+  const after = el('canvas', { class: 'shot', role: 'img', 'aria-label': 'Screenshot of the newer version, with changes outlined' });
+  const note = el('p', { class: 'hint' }, 'Changed areas are outlined in red on the newer screenshot.');
+  const img = new Image();
+  img.onload = () => {
+    after.width = img.naturalWidth;
+    after.height = img.naturalHeight;
+    const ctx = after.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0);
+    if (!before.complete || !sameShape(
+      { width: before.naturalWidth, height: before.naturalHeight }, { width: img.naturalWidth, height: img.naturalHeight },
+    )) {
+      note.textContent = 'The watched area changed size, so the two screenshots are shown without outlines.';
+      return;
+    }
+    const c = new OffscreenCanvas(img.naturalWidth, img.naturalHeight);
+    const cctx = c.getContext('2d', { willReadFrequently: true });
+    cctx.drawImage(before, 0, 0);
+    const old = cctx.getImageData(0, 0, c.width, c.height).data;
+    const now = ctx.getImageData(0, 0, after.width, after.height).data;
+    const boxes = changedCells(old, now, after.width, after.height);
+    ctx.lineWidth = Math.max(2, Math.round(after.width / 400));
+    ctx.strokeStyle = '#e5484d';
+    for (const r of boxes) ctx.strokeRect(r.x, r.y, r.w, r.h);
+    if (!boxes.length) note.textContent = 'No visible difference between these two screenshots.';
+  };
+  const draw = () => {
+    img.src = b.shot;
+  };
+  if (before.complete) draw();
+  else before.addEventListener('load', draw, { once: true });
+  before.addEventListener('error', draw, { once: true });
+  return [note, el('div', { class: 'side' },
+    el('figure', {}, el('figcaption', { class: 'muted' }, 'Older'), before),
+    el('figure', {}, el('figcaption', { class: 'muted' }, 'Newer'), after))];
+}
+
+function historyView(history, watch = {}) {
   const wrap = el('section');
   if (history.length === 0) {
     wrap.append(el('p', { class: 'muted' }, 'No content captured yet.'));
@@ -381,9 +424,11 @@ function historyView(history) {
   };
 
   const hasFormats = history.some((h) => typeof h.format === 'string');
+  const hasShots = history.some((h) => h.shot);
+  const ignoreAttributes = watch.ignoreAttributes || [];
   const draw = () => {
     current = -1;
-    const view = state.view === 'format' && !hasFormats ? 'text' : state.view;
+    const view = (state.view === 'format' && !hasFormats) || (state.view === 'shot' && !hasShots) ? 'text' : state.view;
     const a = history[Number(from.value)];
     const b = history[Number(to.value)];
     for (const t of tabs.children) t.classList.toggle('active', t.dataset.view === view);
@@ -398,6 +443,27 @@ function historyView(history) {
       const frame = el('iframe', { class: 'visual-frame', sandbox: '', title: 'Visual comparison', referrerpolicy: 'no-referrer' });
       frame.srcdoc = visualDocument(a.text, b.html, { showDeleted: state.showDeleted });
       output.replaceChildren(frame);
+      return;
+    }
+    if (view === 'shot') {
+      if (!a.shot || !b.shot) {
+        output.replaceChildren(el('p', { class: 'muted' },
+          'Screenshots are kept for the 10 most recent versions saved while “Also compare screenshots” is on.'));
+        return;
+      }
+      output.replaceChildren(...screenshotView(a, b));
+      return;
+    }
+    if (view === 'html') {
+      if (!a.html || !b.html) {
+        output.replaceChildren(el('p', { class: 'muted' },
+          'The HTML view is available for the most recent versions only, and for pages read as HTML.'));
+        return;
+      }
+      output.replaceChildren(
+        el('p', { class: 'hint' }, 'One line per element with its attributes in a fixed order, and the text inside it indented below. Scripts, styles and event handlers are never kept.'),
+        el('div', { class: 'diff' }, ...diffNodes(diffText(markupLines(a.html, { ignoreAttributes }), markupLines(b.html, { ignoreAttributes })), onlyChanges.checked)),
+      );
       return;
     }
     if (view === 'source') {
@@ -430,8 +496,13 @@ function historyView(history) {
         el('div', { class: 'diff' }, ...diffNodes(diffText(a.format, b.format), onlyChanges.checked)));
       return;
     }
-    const formatNote = formats && formatMarks(a.format) !== formatMarks(b.format)
-      ? el('p', { class: 'hint' }, 'The formatting changed too. See the Formatting tab.') : null;
+    const notes = [];
+    if (formats && formatMarks(a.format) !== formatMarks(b.format)) notes.push('the formatting (see the Formatting tab)');
+    if (a.html && b.html && markupKey(a.html, ignoreAttributes) !== markupKey(b.html, ignoreAttributes)) notes.push('the HTML (see the HTML tab)');
+    if (a.shot && b.shot && a.shot !== b.shot) notes.push('the screenshot (see the Screenshot tab)');
+    const same = a.text === b.text;
+    const formatNote = notes.length
+      ? el('p', { class: 'hint' }, `${same ? 'The text is the same, but' : 'Also changed:'} ${notes.join(', ')}${same ? ' changed' : ''}.`) : null;
     if (view === 'side') {
       output.replaceChildren(...[formatNote, el('div', { class: 'side' },
         el('div', { class: 'diff' }, ...sideNodes(lines, 'old', onlyChanges.checked)),
@@ -443,6 +514,7 @@ function historyView(history) {
 
   for (const [key, label] of Object.entries(VIEWS)) {
     if (key === 'format' && !hasFormats) continue;
+    if (key === 'shot' && !hasShots) continue;
     tabs.append(el('button', {
       dataset: { view: key },
       onclick: () => {
@@ -708,11 +780,22 @@ function watchForm(watch) {
     ignoreLines: el('textarea', { rows: 2, placeholder: 'Last updated\n/^Visitors: \\d+$/' }),
     pauseAfterAlert: el('input', { type: 'checkbox', checked: w.pauseAfterAlert === true }),
     watchFormatting: el('input', { type: 'checkbox', checked: w.watchFormatting === true }),
+    watchHtml: el('input', { type: 'checkbox', checked: w.watchHtml === true }),
+    ignoreAttributes: el('input', { value: (w.ignoreAttributes || []).join(', '), placeholder: 'e.g. style, data-*, aria-*' }),
+    watchScreenshot: el('input', { type: 'checkbox', checked: w.watchScreenshot === true }),
+    screenshotThreshold: el('input', {
+      type: 'number', min: 0.1, max: 50, step: 0.1, value: String(w.screenshotThreshold ?? 1),
+    }),
   };
   f.ignoreLines.value = (w.ignore?.lines || []).join('\n');
   const policy = state.policy;
   if (policy?.disableRenderInTab || policy?.disableCookies) f.mode.querySelector('option[value="tab"]').disabled = true;
   if (policy?.disableLiveMode) f.live.disabled = true;
+  const screenshotsBlocked = Boolean(policy?.disableScreenshots || policy?.disableRenderInTab || policy?.disableCookies);
+  if (screenshotsBlocked) {
+    f.watchScreenshot.checked = false;
+    f.watchScreenshot.disabled = true;
+  }
   if (policy?.disableCookies) {
     f.sendCookies.disabled = true;
     f.autoCookies.disabled = true;
@@ -758,6 +841,10 @@ function watchForm(watch) {
       el('div', { class: 'hint' }, 'When downloading gives only a placeholder like “your browser is not supported” or an empty page, it isn’t saved, and you’re asked what to do.')));
   const signInRow = el('label', { class: 'field' }, el('span', {}, 'If the page asks me to sign in'), f.onSignIn,
     el('span', { class: 'hint' }, 'This happens once, not on every check. After you sign in, checks pick up again by themselves.'));
+  const ignoreAttributesRow = el('label', { class: 'field' }, el('span', {}, 'Attributes to ignore'), f.ignoreAttributes,
+    el('span', { class: 'hint' }, 'Separate with commas. End a name with * to cover every attribute starting with it, like data-*. Use this for attributes that change on every visit.'));
+  const thresholdRow = el('label', { class: 'field' }, el('span', {}, 'Count it as a change when at least this much of the picture differs (%)'), f.screenshotThreshold,
+    el('span', { class: 'hint' }, '1% catches a changed price or button; raise it for pages with small moving parts like clocks or ads.'));
   const randomRow = el('span', { class: 'inline' }, 'and', f.randomMax, f.randomUnit);
   const sliderRow = intervalSlider(f.every, f.unit, policy?.minIntervalMinutes || 0);
   const windowRow = el('div', { class: 'field' },
@@ -774,6 +861,8 @@ function watchForm(watch) {
     randomRow.hidden = f.scheduleType.value !== 'random';
     windowRow.hidden = !f.windowOn.checked;
     soundRow.hidden = !f.sound.checked;
+    ignoreAttributesRow.hidden = !f.watchHtml.checked;
+    thresholdRow.hidden = !f.watchScreenshot.checked;
     matchRow.hidden = rules.children.length < 2;
     noRules.hidden = rules.children.length > 0;
   }
@@ -782,6 +871,16 @@ function watchForm(watch) {
   f.windowOn.addEventListener('change', sync);
   f.sendCookies.addEventListener('change', sync);
   f.sound.addEventListener('change', sync);
+  f.watchHtml.addEventListener('change', sync);
+  // Screenshots are taken of the hidden window, so turning them on picks it.
+  f.watchScreenshot.addEventListener('change', () => {
+    if (f.watchScreenshot.checked) f.mode.value = 'tab';
+    sync();
+  });
+  f.mode.addEventListener('change', () => {
+    if (f.mode.value !== 'tab') f.watchScreenshot.checked = false;
+    sync();
+  });
   sync();
 
   const error = el('p', { class: 'error', hidden: true });
@@ -861,8 +960,14 @@ function watchForm(watch) {
       }
       // Ask for site access first, while we still have the click's user gesture.
       let granted = false;
+      const screenshots = f.watchScreenshot.checked
+        && !(await chrome.permissions.contains({ origins: ['<all_urls>'] }).catch(() => false));
       try {
-        granted = await requestAccess([url]);
+        granted = await requestAccess([url], { screenshots });
+        if (!granted && screenshots) {
+          showError('Screenshots need access to all sites, which Chrome only allows for screenshots of a tab. Allow it, or turn screenshots off.');
+          return;
+        }
       } catch {
         error.hidden = false;
         error.textContent = 'Enter a full http:// or https:// address.';
@@ -907,6 +1012,10 @@ function watchForm(watch) {
         },
         pauseAfterAlert: f.pauseAfterAlert.checked,
         watchFormatting: f.watchFormatting.checked,
+        watchHtml: f.watchHtml.checked,
+        ignoreAttributes: f.ignoreAttributes.value,
+        watchScreenshot: f.watchScreenshot.checked,
+        screenshotThreshold: Number(f.screenshotThreshold.value),
       };
       try {
         const { id } = await call(watch ? 'updateWatch' : 'createWatch', { watch: data });
@@ -953,7 +1062,15 @@ function watchForm(watch) {
     el('label', { class: 'field' }, el('span', {}, 'Ignore lines containing'), f.ignoreLines,
       el('span', { class: 'hint' }, 'One per line, any case. Write /pattern/ for a regular expression. Matching lines still show in the history but never count as a change on their own.')),
     el('label', { class: 'check' }, f.watchFormatting, el('span', {}, 'Also watch formatting',
-      el('div', { class: 'hint' }, 'Counts a change when text turns bold or italic, becomes a heading, list or table, or its links, colors or sizes change, even if the words stay the same. Only formatting written into the page counts, not its stylesheets. Not used with the regular expression filter, or for PDFs, JSON and feeds.')))),
+      el('div', { class: 'hint' }, 'Counts a change when text turns bold or italic, becomes a heading, list or table, or its links, colors or sizes change, even if the words stay the same. Only formatting written into the page counts, not its stylesheets. Not used with the regular expression filter, or for PDFs, JSON and feeds.'))),
+    el('label', { class: 'check' }, f.watchHtml, el('span', {}, 'Also watch the HTML',
+      el('div', { class: 'hint' }, 'Counts a change when elements or their attributes change, even if the text doesn’t: a button becomes disabled, a class or image changes, a link points somewhere new, an element is added or removed.'))),
+    ignoreAttributesRow,
+    el('label', { class: 'check' }, f.watchScreenshot, el('span', {}, 'Also compare screenshots',
+      el('div', { class: 'hint' }, screenshotsBlocked
+        ? 'Your organization doesn’t allow screenshots.'
+        : 'Takes a picture of the watched parts in the hidden window and counts a change when it looks different. Chrome only allows screenshots with access to all sites, so it asks for that once; it’s given back when no watch takes screenshots. Checks still only load the pages you chose.'))),
+    thresholdRow),
   el('fieldset', {}, el('legend', {}, 'When to check'),
     el('div', { class: 'inline' }, f.scheduleType, f.every, f.unit, randomRow),
     sliderRow,
