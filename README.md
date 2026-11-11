@@ -1,7 +1,7 @@
 # Open Page Watcher
 
 A privacy- and security-first Chrome extension that watches web pages for
-changes and alerts you, similar to Distill Web Monitor. Everything happens on
+changes and alerts you, similar to other popular web monitors. Everything happens on
 your computer: no servers, no accounts and no data collection of any kind.
 
 ## Private and local by design
