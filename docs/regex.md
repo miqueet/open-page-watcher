@@ -2,7 +2,7 @@
 
 A regular expression ("regex") is a pattern for text: `\$[\d,.]+` means "a
 dollar sign followed by digits, commas and dots", which matches `$1,299.00`.
-Open Page Watcher uses regex in three places, and each behaves a little
+Open Page Watcher uses regex in four places, and each behaves a little
 differently:
 
 | Where | What it does | Case | `^` and `$` mean |
@@ -10,6 +10,7 @@ differently:
 | [1. Keep only text matching](#1-keep-only-text-matching) (What to watch) | Keeps only the matching pieces; everything else is thrown away before comparing | **Case-sensitive** | Start and end of the **whole text** |
 | [2. Matches regex rule](#2-the-matches-regex-alert-rules) (Alerts) | Alerts only if the text matches (or doesn't) | Any case | Start and end of **each line** |
 | [3. Ignore lines containing](#3-ignore-lines-containing) (What to watch) | Lines that match never count as a change | As you write it: add `i` for any case | Start and end of the **line** |
+| [4. Which number](#4-which-number) (number alert rules) | Says which number a number rule reads | Any case | Start and end of **each line** |
 
 The syntax is JavaScript's, the same as in Chrome's developer tools. If a
 pattern isn't valid, the editor shows the error and won't save.
@@ -178,6 +179,36 @@ Last updated
 | `/^\d+ people are looking at this$/i` | `12 people are looking at this` | `In stock` |
 | `/sponsored/i` | Any line mentioning sponsored | |
 | `/^\s*$/` | Blank lines (they're already removed) | |
+
+## 4. Which number
+
+Every number rule under **Alerts** (less than, more than, dropped below, rose
+above, increased, decreased…) has an optional **Which number** box. Empty means
+"the first number in the text". A regex there says where the number is:
+
+- If the pattern has a group `( )`, the number is read from what the **first
+  group** matched; otherwise from the whole match.
+- It ignores case, and `^` and `$` match at each line.
+- Only the first match is used.
+- A currency sign just before the group still shows in the notification:
+  `\$(\S+)` gives "$1,199", not "1,199".
+
+With the watched text `Only 3 left · Price: $1,299 · Was $1,499`:
+
+| Which number | Reads |
+| --- | --- |
+| (empty) | 3 |
+| `Price:\s*(\S+)` | 1299 |
+| `\$(\S+)` | 1299 (the first `$` amount) |
+| `was\s*(\S+)` | 1499 |
+| `(\d+) left` | 3 |
+| `^Total:\s*(.+)$` | The number on the line starting with "Total:" |
+| `([\d.,]+[KM]?) followers` | 12400 from `12.4K followers` |
+
+Unlike the regex filter, this doesn't change what's saved or compared: the
+whole text is still watched, and only the rule (plus the notification and the
+number chart) looks at that one number. See
+[Alert rules: Which number](alerts.md#which-number).
 
 ## Testing a pattern
 

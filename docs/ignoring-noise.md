@@ -161,3 +161,5 @@ number is the hour in "Updated 11:42", so the notification reads "Went up from
 11 to 12". Selecting only the status line (or leaving out the "Updated" line
 with a [Leave out](selectors.md#leave-out) selector) fixes that too: the
 notification then reads "Now: Degraded performance · Was: All systems normal".
+On a watch with number rules, [Which number](alerts.md#which-number) also
+makes the notification follow the number you care about.

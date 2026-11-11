@@ -187,13 +187,14 @@ examples you can copy into the watch editor:
 | [Getting started](docs/getting-started.md) | Installing, your first watch, the popup, inbox and editor |
 | [How it works](docs/how-it-works.md) | What happens during a check, step by step |
 | [Selectors](docs/selectors.md) | The picker, CSS, XPath, attributes, "Leave out" and JSON paths, with a cheat sheet |
-| [Regular expressions](docs/regex.md) | The three places regex is used, with a cheat sheet and examples |
-| [Alert rules and notifications](docs/alerts.md) | Every rule, including "notify me when the price is below $1,200", sounds and spoken alerts |
+| [Regular expressions](docs/regex.md) | The four places regex is used, with a cheat sheet and examples |
+| [Alert rules and notifications](docs/alerts.md) | Every rule, including "notify me when the price drops below $1,200", sounds and spoken alerts |
 | [Ignoring noise](docs/ignoring-noise.md) | Ignoring dates, numbers, case, spacing, line order and lines |
 | [Loading pages](docs/loading-pages.md) | Download vs. hidden tab vs. live mode, sign-ins, PDFs, feeds, JSON |
 | [Formatting changes](docs/formatting.md) | Alerts when text turns bold, becomes a heading or changes color |
+| [HTML and visual changes](docs/html-and-visual-changes.md) | Alerts when elements, attributes or the way the page looks change, even if the text doesn't |
 | [Reviewing changes](docs/reviewing-changes.md) | Comparison views, the number chart, CSV export, backups, shortcuts |
-| [Examples and use cases](docs/examples.md) | 20 step-by-step recipes: prices, restocks, status pages, releases, jobs, policies, APIs |
+| [Examples and use cases](docs/examples.md) | 22 step-by-step recipes: prices, restocks, status pages, releases, jobs, policies, APIs |
 | [Troubleshooting](docs/troubleshooting.md) | What every error means and how to fix it |
 
 ## Permissions

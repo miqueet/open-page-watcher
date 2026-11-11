@@ -14,11 +14,12 @@ New here? Read [Getting started](getting-started.md), then pick a recipe from
 | [Getting started](getting-started.md) | Installing, adding your first watch, the popup, the inbox and the editor |
 | [How it works](how-it-works.md) | What happens during a check, step by step, from the schedule to the notification |
 | [Choosing what to watch: selectors](selectors.md) | The picker, CSS selectors, XPath, attributes, "Leave out", quick fills and JSON paths, with sample pages |
-| [Regular expressions](regex.md) | The three places regex is used, how each one behaves, and a cheat sheet |
-| [Alert rules and notifications](alerts.md) | Every alert rule (including "notify me when the price is below $1,200"), sounds, spoken alerts, quiet hours and summaries |
+| [Regular expressions](regex.md) | The four places regex is used, how each one behaves, and a cheat sheet |
+| [Alert rules and notifications](alerts.md) | Every alert rule (including "notify me when the price drops below $1,200" and picking which number), sounds, spoken alerts, quiet hours and summaries |
 | [Ignoring noise](ignoring-noise.md) | Ignoring dates, numbers, case, spacing, line order and whole lines, plus change-size rules |
 | [Loading pages](loading-pages.md) | Downloading vs. a hidden tab vs. live mode, pages behind a sign-in, script-only pages, PDFs, feeds and JSON |
 | [Formatting changes](formatting.md) | Alerting when text turns bold, becomes a heading, changes color or a link changes address |
+| [HTML and visual changes](html-and-visual-changes.md) | Alerting when elements or attributes change (a button gets disabled, an image is swapped), or when a screenshot of the page looks different |
 | [Reviewing changes](reviewing-changes.md) | The inbox, the comparison views, the number chart, highlighting, CSV export, backups and keyboard shortcuts |
 | [Examples and use cases](examples.md) | Step-by-step recipes: price drops, restocks, job boards, status pages, release notes, policies, APIs and more |
 | [Troubleshooting](troubleshooting.md) | What each error means and how to fix it |

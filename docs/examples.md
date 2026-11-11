@@ -31,6 +31,8 @@ selectors to match it (the picker can write them for you; see
 18. [A blog or news site without a feed](#18-a-blog-or-news-site-without-a-feed)
 19. [Government notices and forms](#19-government-notices-and-forms)
 20. [A PDF that's replaced at the same address](#20-a-pdf-thats-replaced-at-the-same-address)
+21. [A button that gets disabled](#21-a-button-that-gets-disabled)
+22. [A status light whose color comes from the stylesheet](#22-a-status-light-whose-color-comes-from-the-stylesheet)
 
 ---
 
@@ -41,23 +43,27 @@ selectors to match it (the picker can write them for you; see
 | Field | Value |
 | --- | --- |
 | Page address | `https://store.example/laptops/model-x` |
-| Parts of the page | The price only, e.g. `.price` or `[itemprop="price"]` (or use the picker) |
-| Keep only text matching | `\$[\d,.]+` (if the price element contains other text) |
+| Parts of the page | The price, e.g. `.price` or `[itemprop="price"]` (or use the picker) |
 | When to check | Every 1 hour |
-| Alert rule | *New text* **Number is less than** `1200` |
-| Pause after the first alert | On, if you only want to hear once |
+| Alert rule | *New text* **Number dropped below** `$1,200` |
+| Which number | Empty if the price is the first number; otherwise e.g. `\$(\S+)` |
 | Play a sound | On, pick **Rising** |
 
-Notification when it happens: **"Went down from $1,249 to $1,199 (−4.0%)"**.
+Notification when it happens: **"Went down from $1,249 to $1,199 (−4.0%), now
+below $1,200"**. You're told once when it crosses; if it then drops further to
+$1,150 you aren't told again, unless it goes back above $1,200 and drops again.
 
 Variations:
 
-- Any drop at all: rule **Number decreased** instead.
+- Every change while it's under $1,200: **Number is less than** `$1,200`.
+- Any drop at all: **Number decreased**.
 - Only big drops: **Number decreased by more than %** `10`.
-- Price *rises* above a level (selling, or budget alarms): **Number is more
-  than**.
-- The page shows several numbers ("Only 3 left at $1,299"): make sure the price
-  is the first number; see [Making sure the right number is read](alerts.md#making-sure-the-right-number-is-read).
+- Price *rises* above a level (selling, or budget alarms): **Number rose
+  above**.
+- The page shows several numbers ("Only 3 left at $1,299"): put `\$(\S+)` in
+  **Which number**; see [Which number](alerts.md#which-number).
+- Prices written like `1.299,00 €` work as they are; type the limit as
+  `1200` (not `1.200`, which reads as 1.2).
 
 ## 2. Back in stock
 
@@ -329,6 +335,36 @@ For links instead of titles, use `article h2 a @href`.
 
 The PDF's text is compared line by line. PDFs up to 20 MB are supported. Scanned
 PDFs (images of text) have no text to read.
+
+## 21. A button that gets disabled
+
+*The "Add to cart" text never changes, but the site disables the button when
+it's sold out.*
+
+| Field | Value |
+| --- | --- |
+| Parts of the page | The button or its container, e.g. `.buy-box` |
+| Also watch the HTML | On |
+| Attributes to ignore | `data-*` if the site stamps changing data attributes |
+| Pause after the first alert | On |
+
+Notification: **"HTML changed: <button> gained disabled"** (or "lost disabled"
+when it's back). See [HTML and visual changes](html-and-visual-changes.md).
+
+## 22. A status light whose color comes from the stylesheet
+
+*A dashboard shows a green, amber or red dot; the label next to it doesn't
+always change.*
+
+| Field | Value |
+| --- | --- |
+| Parts of the page | The dot and its label |
+| How to load the page | Open it in a hidden window (ticking screenshots picks this) |
+| Also compare screenshots | On, sensitivity 1% |
+
+Notification: **"Looks different: 4% of the screenshot changed."** The
+**Screenshot** view outlines what changed. Screenshots need Chrome's access to
+all sites; [here's why](html-and-visual-changes.md#why-it-asks-for-access-to-all-sites).
 
 ---
 
