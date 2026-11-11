@@ -10,6 +10,12 @@ managed Chrome browsers, and how to limit what it can do.
 - It has no access to any site at install time. Chrome asks the user for access
   to one site at a time, when they add a watch for it. Access is released when
   the last watch on that site is deleted.
+- The one exception is screenshot comparison, which is off by default. Chrome
+  only lets an extension screenshot a tab when it has access to all sites, so
+  the extension asks the user for that when they turn screenshots on for a
+  watch, and gives it back as soon as no watch uses screenshots. Even while it
+  has it, checks only ever load the pages the user chose, and site rules below
+  still apply. `disableScreenshots` removes the option.
 - Pages are downloaded and parsed without running their scripts, unless the user
   turns on "render in tab" for a watch. When a download only gives a
   placeholder, the extension asks the user before switching that watch; it
@@ -47,6 +53,7 @@ set by the organization.
 | `disableCookies` | boolean | Checks never use the user's signed-in session: no cookies are sent, cookies are never turned on automatically for pages that ask for a sign-in, and render-in-tab mode (which loads the page as the user) is off. |
 | `disableRenderInTab` | boolean | Pages are only downloaded and parsed; their scripts never run. |
 | `disableLiveMode` | boolean | The extension never observes open tabs. |
+| `disableScreenshots` | boolean | Watches can't compare screenshots, so the extension never asks for access to all sites (screenshots need it). |
 | `minIntervalMinutes` | integer | Checks run at most this often. Shorter intervals are raised to it. |
 | `maxWatches` | integer | Users can't add more watches than this. |
 

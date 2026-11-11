@@ -18,6 +18,8 @@
 // read) and title, used to spot a sign-in page, and scripts (how many script
 // elements the page has) and emptyRoot (an app's mount point is empty), used
 // to spot a page that only works with scripts.
+// frameUrl is the document's address, so frames from sites the user didn't
+// allow can be left out.
 // pageText is the start of the whole page's text when the selected parts
 // weren't found.
 export function extractText(spec, doc = document) {
@@ -250,7 +252,13 @@ export function extractText(spec, doc = document) {
   } catch {
     // not an HTML document
   }
-  return Object.assign(read(), { signInForm, title, scripts, emptyRoot });
+  let frameUrl = '';
+  try {
+    frameUrl = doc.location ? String(doc.location.href) : '';
+  } catch {
+    // no location (a parsed document)
+  }
+  return Object.assign(read(), { signInForm, title, scripts, emptyRoot, frameUrl });
 
   function read() {
     try {

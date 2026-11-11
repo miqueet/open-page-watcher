@@ -1,5 +1,9 @@
 import { extractText } from './lib/extract.js';
 import { formatChanged, summarizeFormat } from './lib/formatting.js';
+import { markupChanged, summarizeMarkup } from './lib/markup.js';
+import {
+  pixelDifference, sameShape, describeShotChange, COMPARE_WIDTH,
+} from './lib/shots.js';
 import { conditionMet, changedText, numberFocus } from './lib/conditions.js';
 import { selectJson, jsonValuesText } from './lib/jsonpath.js';
 import { highlightChanges, HIGHLIGHT_CSS } from './lib/highlight.js';
@@ -149,7 +153,7 @@ async function checkWatch(id, { via = 'schedule', tabId, scheduled = false } = {
     let redirectBlocked = false;
     try {
       checkSiteAllowed(policy, watch.url);
-      const granted = await chrome.permissions.contains({ origins: [originPattern(watch.url)] });
+      const granted = await hasSiteAccess(watch.url);
       if (!granted) throw new Error('Access to this site has not been granted. Open the watch and click Allow.');
       if (via === 'live') result = await extractInTab(tabId, watch, { userTab: true });
       else if (watch.mode === 'tab') result = await renderAndExtract(watch);
@@ -244,25 +248,40 @@ async function record(watch, result, error, {
   // Only the formatting changed (when the watch counts formatting).
   const formatOnly = !textChanged && watch.watchFormatting
     && formatChanged(previous.format, result.format, (f) => comparisonKey(f, watch.ignore));
-  const changed = textChanged || formatOnly;
+  // Only the HTML elements or attributes changed (when the watch counts them).
+  const markupOnly = !textChanged && !formatOnly && watch.watchHtml
+    && markupChanged(previous.html, result.html, watch.ignoreAttributes, (k) => comparisonKey(k, watch.ignore));
+  // Only the way it looks changed (when the watch compares screenshots).
+  let shotOnly = null;
+  if (!textChanged && !formatOnly && !markupOnly && watch.watchScreenshot && previous.shot && result.shot) {
+    const diff = await compareShots(previous.shot, result.shot).catch(() => null);
+    if (diff && (diff.resized || diff.percent >= watch.screenshotThreshold)) shotOnly = diff;
+  }
+  const changed = textChanged || formatOnly || markupOnly || Boolean(shotOnly);
   // The way the page is loaded just changed: this version is the new starting
   // point, not a change to alert about.
   const rebaseline = watch.rebaseline === true && Boolean(previous) && changed;
+  if (result.shotError) logEntry.note = `No screenshot: ${result.shotError}`;
   let alert = false;
   if (changed) {
     const entry = { t: now, text: result.text };
     if (result.html) entry.html = result.html;
     if (typeof result.format === 'string') entry.format = result.format;
+    if (result.shot) entry.shot = result.shot;
     await appendHistory(id, entry, watch.historyLimit);
     if (previous && !rebaseline) {
       logEntry.changed = true;
       if (formatOnly) logEntry.note = 'Only the formatting changed';
+      if (markupOnly) logEntry.note = 'Only the HTML changed';
+      if (shotOnly) logEntry.note = 'Only the screenshot changed';
       alert = conditionMet(watch.condition, previous.text, result.text, history.map((h) => h.text));
     }
   } else if (previous.text === result.text && ((result.html && !previous.html)
-    || (typeof result.format === 'string' && typeof previous.format !== 'string'))) {
+    || (typeof result.format === 'string' && typeof previous.format !== 'string')
+    || (result.shot && !previous.shot))) {
     // Backfill the HTML of the current version so the visual view works, and
-    // its formatting so the next check has something to compare with.
+    // its formatting and screenshot so the next check has something to
+    // compare with.
     await serialize(async () => {
       const key = `history:${id}`;
       const h = (await chrome.storage.local.get(key))[key] || [];
@@ -270,13 +289,18 @@ async function record(watch, result, error, {
       if (last && last.text === result.text) {
         if (result.html && !last.html) last.html = result.html;
         if (typeof result.format === 'string' && typeof last.format !== 'string') last.format = result.format;
+        if (result.shot && !last.shot) last.shot = result.shot;
         await chrome.storage.local.set({ [key]: h });
       }
     });
   }
-  const summary = previous && changed && !rebaseline
-    ? (formatOnly ? summarizeFormat(previous.format, result.format) : summarizeChange(previous.text, result.text, 300, numberFocus(watch.condition)))
-    : '';
+  let summary = '';
+  if (previous && changed && !rebaseline) {
+    if (formatOnly) summary = summarizeFormat(previous.format, result.format);
+    else if (markupOnly) summary = summarizeMarkup(previous.html, result.html, watch.ignoreAttributes);
+    else if (shotOnly) summary = describeShotChange(shotOnly.percent, shotOnly);
+    else summary = summarizeChange(previous.text, result.text, 300, numberFocus(watch.condition));
+  }
   logEntry.alerted = alert;
   if (alert && watch.pauseAfterAlert) logEntry.note = 'Paused after this alert (“Pause after the first alert” is on)';
   if (cookiesTurnedOn) logEntry.note = 'Turned on “Send my cookies” because the page asked you to sign in';
@@ -420,7 +444,7 @@ async function checkRedirect(watch, finalUrl, policy) {
   const to = new URL(finalUrl);
   checkSiteAllowed(policy, finalUrl);
   if (to.hostname === new URL(watch.url).hostname) return;
-  if (!(await chrome.permissions.contains({ origins: [originPattern(finalUrl)] }))) {
+  if (!(await hasSiteAccess(finalUrl))) {
     throw new Error(`The page redirected to ${to.host}, which this watch doesn't have access to`);
   }
 }
@@ -476,10 +500,149 @@ async function renderAndExtract(watch) {
     if (!tab.url || new URL(tab.url).origin !== new URL(watch.url).origin) {
       throw new Error('The page redirected to a different site');
     }
-    return await extractInTab(tabId, watch, { expect: { origin: new URL(watch.url).origin } });
+    const result = await extractInTab(tabId, watch, { expect: { origin: new URL(watch.url).origin } });
+    if (watch.watchScreenshot) {
+      try {
+        result.shot = await takeScreenshot(win.id, tabId, watch);
+      } catch (e) {
+        result.shotError = e?.message || String(e);
+      }
+    }
+    return result;
   } finally {
     renderTabs.delete(tabId);
     chrome.windows.remove(win.id).catch(() => {});
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Screenshots (opt-in per watch, hidden-window mode only)
+
+const MAX_SHOT_WIDTH = 1000;
+const MAX_SHOT_HEIGHT = 2000;
+const MAX_SHOT_CHARS = 1024 * 1024;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Scrolls the hidden tab so the watched parts are in view and returns where
+// they are, in CSS pixels of the viewport, once web fonts and images in view
+// have loaded (otherwise the same page can look different from one check to
+// the next). Injected, so self-contained.
+async function screenshotArea(selectors) {
+  const settle = (p) => Promise.race([p, new Promise((r) => setTimeout(r, 3000))]);
+  try {
+    await settle(document.fonts && document.fonts.ready);
+  } catch {
+    // no font loading API
+  }
+  const rects = [];
+  for (const sel of selectors) {
+    let nodes = [];
+    try {
+      if (sel.type === 'xpath') {
+        const r = document.evaluate(sel.expr, document, null, 7, null);
+        for (let i = 0; i < r.snapshotLength; i++) nodes.push(r.snapshotItem(i));
+      } else nodes = Array.from(document.querySelectorAll(sel.expr));
+    } catch {
+      nodes = [];
+    }
+    for (const node of nodes) {
+      const el = node.nodeType === 1 ? node : node.parentElement;
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) rects.push({ top: r.top + scrollY, left: r.left + scrollX, bottom: r.bottom + scrollY, right: r.right + scrollX });
+    }
+  }
+  const images = Array.from(document.images).filter((img) => !img.complete);
+  await settle(Promise.all(images.map((img) => new Promise((r) => {
+    img.addEventListener('load', r, { once: true });
+    img.addEventListener('error', r, { once: true });
+  }))));
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const view = { vw: innerWidth, vh: innerHeight };
+  if (!rects.length) {
+    scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    return { ...view, x: 0, y: 0, w: innerWidth, h: innerHeight };
+  }
+  const pad = 8;
+  const top = Math.max(0, Math.min(...rects.map((r) => r.top)) - pad);
+  const left = Math.max(0, Math.min(...rects.map((r) => r.left)) - pad);
+  const bottom = Math.max(...rects.map((r) => r.bottom)) + pad;
+  const right = Math.max(...rects.map((r) => r.right)) + pad;
+  scrollTo({ top, left: right - left > innerWidth ? left : Math.max(0, right - innerWidth), behavior: 'instant' });
+  const x = Math.max(0, left - scrollX);
+  const y = Math.max(0, top - scrollY);
+  return { ...view, x, y, w: Math.min(innerWidth - x, right - left), h: Math.min(innerHeight - y, bottom - top) };
+}
+
+async function captureWindow(windowId) {
+  try {
+    return await chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
+  } catch (e) {
+    // Some systems don't draw minimized windows. Show it, without focus,
+    // just long enough to take the picture.
+    try {
+      await chrome.windows.update(windowId, { state: 'normal', focused: false });
+      await sleep(500);
+      return await chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
+    } catch {
+      throw e;
+    }
+  }
+}
+
+// A WebP picture of the watched parts (or the top of the page), as a data URL.
+async function takeScreenshot(windowId, tabId, watch) {
+  const selectors = watch.selectors.filter((s) => s.type === 'css' || s.type === 'xpath');
+  const [{ result: area } = {}] = await chrome.scripting.executeScript({ target: { tabId }, func: screenshotArea, args: [selectors] });
+  if (!area || !(area.w > 0) || !(area.h > 0)) throw new Error('The watched parts take up no space on the page');
+  await sleep(300); // let the scroll paint
+  const shot = await createImageBitmap(await (await fetch(await captureWindow(windowId))).blob());
+  const scale = shot.width / area.vw;
+  const sx = Math.round(area.x * scale);
+  const sy = Math.round(area.y * scale);
+  const sw = Math.max(1, Math.min(shot.width - sx, Math.round(area.w * scale)));
+  const sh = Math.max(1, Math.min(shot.height - sy, Math.round(area.h * scale)));
+  // Saved at the area's size in CSS pixels, whatever resolution Chrome
+  // captured at (it varies, e.g. for minimized windows), so two checks of the
+  // same page always give pictures of the same size.
+  const k = Math.min(1, MAX_SHOT_WIDTH / area.w, MAX_SHOT_HEIGHT / area.h);
+  const canvas = new OffscreenCanvas(Math.max(1, Math.round(area.w * k)), Math.max(1, Math.round(area.h * k)));
+  canvas.getContext('2d').drawImage(shot, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+  shot.close();
+  const blob = await canvas.convertToBlob({ type: 'image/webp', quality: 0.85 });
+  const url = await blobToDataUrl(blob);
+  if (url.length > MAX_SHOT_CHARS) throw new Error('The screenshot is too large to keep');
+  return url;
+}
+
+async function blobToDataUrl(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return `data:${blob.type};base64,${btoa(binary)}`;
+}
+
+// How different two stored screenshots are: { percent, resized }.
+async function compareShots(before, after) {
+  const decode = async (url) => {
+    if (typeof url !== 'string' || !url.startsWith('data:image/')) throw new Error('Not a screenshot');
+    return createImageBitmap(await (await fetch(url)).blob());
+  };
+  const [a, b] = await Promise.all([decode(before), decode(after)]);
+  try {
+    if (!sameShape(a, b)) return { percent: 100, resized: true };
+    const width = Math.min(COMPARE_WIDTH, a.width);
+    const height = Math.max(1, Math.round((a.height * width) / a.width));
+    const pixels = (img) => {
+      const c = new OffscreenCanvas(width, height);
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0, width, height);
+      return ctx.getImageData(0, 0, width, height).data;
+    };
+    return { percent: pixelDifference(pixels(a), pixels(b)), resized: false };
+  } finally {
+    a.close();
+    b.close();
   }
 }
 
@@ -497,6 +660,14 @@ async function extractInTab(tabId, watch, { userTab = false, expect = null } = {
     func: extractText,
     args: [extractSpec(watch, tab.url, { userTab, expect })],
   });
+  // While access to all sites is held for screenshots, Chrome runs the
+  // extractor in every frame; keep only frames from sites the user allowed.
+  for (const i of injections) {
+    if (i.frameId !== 0 && i.result && !(isHttpUrl(i.result.frameUrl) && (await hasSiteAccess(i.result.frameUrl)))) {
+      const { origins = [] } = await chrome.permissions.getAll();
+      if (origins.includes(ALL_SITES)) i.result = null;
+    }
+  }
   const main = injections.find((i) => i.frameId === 0)?.result;
   const found = injections
     .sort((a, b) => a.frameId - b.frameId)
@@ -569,7 +740,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
   if (info.status !== 'complete' || !tab.url?.startsWith('http') || tab.incognito || renderTabs.has(tabId)) return;
   const live = Object.values(await getWatches()).filter((w) => w.live && !w.paused && sameDocument(w.url, tab.url));
   if (!live.length || (await getPolicy()).disableLiveMode) return;
-  if (!(await chrome.permissions.contains({ origins: [originPattern(tab.url)] }))) return;
+  if (!(await hasSiteAccess(tab.url))) return;
   await chrome.scripting.executeScript({ target: { tabId }, files: ['src/live.js'] }).catch(() => {});
   for (const w of live) liveCheck(w.id, tabId);
 });
@@ -874,7 +1045,7 @@ async function openPage(id) {
   if (!watch) throw new Error('Watch not found');
   const tab = await chrome.tabs.create({ url: watch.url });
   const history = await getHistory(id);
-  if (history.length < 2 || !(await chrome.permissions.contains({ origins: [originPattern(watch.url)] }))) return 0;
+  if (history.length < 2 || !(await hasSiteAccess(watch.url))) return 0;
   const { added } = changedText(history[history.length - 2].text, history[history.length - 1].text);
   const fragments = added.split('\n').map((l) => l.trim()).filter((l) => l.length >= 2).slice(0, 50);
   if (!fragments.length) return 0;
@@ -925,6 +1096,24 @@ function broadcast(message) {
 // ---------------------------------------------------------------------------
 // Permissions housekeeping
 
+// Access to all sites, asked for only while a watch compares screenshots
+// (Chrome allows screenshots of a tab with nothing less).
+const ALL_SITES = '<all_urls>';
+
+// Whether the user allowed this site. Access to all sites, held for
+// screenshots, doesn't count on its own: a site needs its own grant or a
+// watch the user added for it, so screenshots never widen where checks,
+// redirects or frames may go. (While access to all sites is held, Chrome
+// doesn't record new per-site grants separately, hence the watch list.)
+async function hasSiteAccess(url) {
+  const pattern = originPattern(url);
+  const { origins = [] } = await chrome.permissions.getAll();
+  if (!origins.includes(ALL_SITES)) return chrome.permissions.contains({ origins: [pattern] });
+  if (origins.includes(pattern)) return true;
+  const chosen = [...Object.values(await getWatches()), ...Object.values(await pickerSessions())];
+  return chosen.some((w) => isHttpUrl(w.url) && originPattern(w.url) === pattern);
+}
+
 // Releases site access that no remaining watch needs.
 // Removes every optional site permission no watch (or open picker) uses, e.g.
 // access granted for a watch that then couldn't be saved.
@@ -937,6 +1126,16 @@ async function releaseUnusedAccess() {
       await chrome.permissions.remove({ origins: [origin] }).catch(() => {}); // required ones can't be removed
     }
   }
+  await releaseScreenshotAccess();
+}
+
+// Gives back access to all sites once no watch compares screenshots.
+async function releaseScreenshotAccess() {
+  const { origins = [] } = await chrome.permissions.getAll();
+  if (!origins.includes(ALL_SITES)) return;
+  const policy = await getPolicy();
+  const screenshots = Object.values(await getWatches()).some((w) => applyPolicy(policy, w).watchScreenshot);
+  if (!screenshots) await chrome.permissions.remove({ origins: [ALL_SITES] }).catch(() => {});
 }
 
 async function releaseUnusedOrigins(removedUrls) {
@@ -989,6 +1188,8 @@ const uiHandlers = {
     if (rescheduled) clean.nextCheckAt = nextCheckTime(clean, clean.lastCheckedAt || Date.now());
     if (before.onSignIn !== clean.onSignIn) clean.signInHandled = false; // act on the new choice next check
     if (before.askToRender !== clean.askToRender || before.mode !== clean.mode) clean.scriptsAsked = false;
+    // Turning on HTML or screenshot watching starts from what the page is now.
+    if ((clean.watchHtml && !before.watchHtml) || (clean.watchScreenshot && !before.watchScreenshot)) clean.rebaseline = true;
     await updateWatches((all) => {
       all[clean.id] = clean;
     });
@@ -1000,6 +1201,7 @@ const uiHandlers = {
       if (before.url !== clean.url) await releaseUnusedOrigins([before.url]);
       checkWatch(clean.id);
     }
+    if (before.watchScreenshot && !clean.watchScreenshot) await releaseScreenshotAccess();
     await broadcast({ type: 'changed', id: clean.id });
     return { id: clean.id };
   },
@@ -1108,6 +1310,7 @@ const uiHandlers = {
     if (action === 'delete') {
       for (const id of idSet) await deleteHistory(id);
       await releaseUnusedOrigins(removed);
+      await releaseScreenshotAccess();
     }
     await updateBadge();
     await broadcast({ type: 'changed' });
@@ -1236,7 +1439,7 @@ async function pickForForm({ url, token, selectors, excludes }, sender) {
   if (typeof url !== 'string' || !isHttpUrl(url)) throw new Error('Enter a full http:// or https:// address.');
   if (typeof token !== 'string' || !/^[\w-]{16,64}$/.test(token)) throw new Error('Bad request');
   checkSiteAllowed(await getPolicy(), url);
-  if (!(await chrome.permissions.contains({ origins: [originPattern(url)] }))) throw new Error('Allow access to this site to pick parts on it.');
+  if (!(await hasSiteAccess(url))) throw new Error('Allow access to this site to pick parts on it.');
   const tab = await chrome.tabs.create({ url, active: true });
   await serialize(async () => {
     const { formPicks = {} } = await chrome.storage.session.get('formPicks');
@@ -1324,6 +1527,6 @@ async function savePickerWatch(message, sender) {
   await addWatches([watch]);
   await endPickerSession(tab.id);
   checkWatch(watch.id);
-  if (!(await chrome.permissions.contains({ origins: [originPattern(watch.url)] }))) openInbox(watch.id);
+  if (!(await hasSiteAccess(watch.url))) openInbox(watch.id);
   return { id: watch.id };
 }

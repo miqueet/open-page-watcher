@@ -2,13 +2,14 @@ import { cleanWindow } from './watch.js';
 
 // All persistent state lives in chrome.storage.local.
 //   watches            -> { [id]: watch }
-//   history:<id>       -> [{ t, text, html?, format? }] oldest first
+//   history:<id>       -> [{ t, text, html?, format?, shot? }] oldest first
 //   log:<id>           -> [{ t, ok, changed, alerted, error, ms, via }] newest last
 //   settings           -> see DEFAULT_SETTINGS
 //
 // Writes are serialized so concurrent checks can't overwrite each other.
 
 export const HTML_VERSIONS_KEPT = 5;
+export const SHOT_VERSIONS_KEPT = 10;
 const LOG_LIMIT = 50;
 
 export const DEFAULT_SETTINGS = {
@@ -53,8 +54,8 @@ export async function getHistory(id) {
   return (await chrome.storage.local.get(key))[key] || [];
 }
 
-// Page HTML (for the visual and source views) is kept only for the most
-// recent versions, to bound storage.
+// Page HTML (for the visual, source and HTML views) and screenshots are kept
+// only for the most recent versions, to bound storage.
 export function appendHistory(id, entry, limit) {
   return serialize(async () => {
     const key = `history:${id}`;
@@ -62,6 +63,7 @@ export function appendHistory(id, entry, limit) {
     history.push(entry);
     while (history.length > limit) history.shift();
     for (let i = 0; i < history.length - HTML_VERSIONS_KEPT; i++) delete history[i].html;
+    for (let i = 0; i < history.length - SHOT_VERSIONS_KEPT; i++) delete history[i].shot;
     await chrome.storage.local.set({ [key]: history });
     return history;
   });

@@ -12,7 +12,9 @@ choose for changes. It is built so that your data never leaves your browser.
 - The text it extracts from those pages each time it checks them, so it can show
   you what changed. It keeps a limited number of versions per watch, which you
   can set, and a cleaned-up copy of the page's markup for the five most recent
-  versions (for the visual comparison).
+  versions (for the visual, source and HTML comparisons).
+- If you turn on screenshots for a watch, a picture of the watched parts for
+  the ten most recent versions.
 - A short log of recent checks (time, result, how long it took).
 - Your settings, such as quiet hours.
 
@@ -40,7 +42,11 @@ site itself.
 ## Permissions
 
 Access to a website is requested only when you add a watch for it, and is
-released when you delete the last watch for that site. See the
+released when you delete the last watch for that site. Screenshots are the one
+exception: Chrome only lets an extension take a screenshot of a tab when it has
+access to all sites, so that is asked for when you turn screenshots on for a
+watch, and given back when no watch uses them. The extension still only loads
+the pages you chose to watch. See the
 [README](README.md#permissions) for why each permission is needed.
 
 ## Alerts
