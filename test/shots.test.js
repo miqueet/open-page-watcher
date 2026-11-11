@@ -44,12 +44,11 @@ test('size changes are spotted and described', () => {
   assert.equal(describeShotChange(100, { resized: true }), 'Looks different: the watched area changed size.');
 });
 
-test('a capture is only kept when nothing moved and it matches the viewport', () => {
+test('a capture is only kept when nothing moved while it was taken', () => {
   const area = { vw: 800, vh: 600, x: 10, y: 20, w: 300, h: 120 };
   assert.equal(steadyCapture(area, { ...area }, { width: 1600, height: 1200 }), true);
   assert.equal(steadyCapture(area, { ...area, y: 20.5 }, { width: 800, height: 600 }), true);
-  // The window was still resizing: the picture has another shape.
-  assert.equal(steadyCapture(area, area, { width: 500, height: 600 }), false);
+  assert.equal(steadyCapture(area, area, { width: 0, height: 600 }), false);
   // The viewport or the watched part changed between measuring and capturing.
   assert.equal(steadyCapture(area, { ...area, vw: 500 }, { width: 800, height: 600 }), false);
   assert.equal(steadyCapture(area, { ...area, y: 60 }, { width: 800, height: 600 }), false);

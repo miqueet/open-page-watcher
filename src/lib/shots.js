@@ -63,15 +63,14 @@ export function changedCells(a, b, width, height, cell = 12, tolerance = PIXEL_T
 }
 
 // Whether a capture can be trusted: the viewport and the watched area were
-// the same just before and just after it (within a pixel), and the picture
-// has the viewport's shape. `before`/`after` are { vw, vh, x, y, w, h } in CSS
-// pixels; `shot` is { width, height } in captured pixels.
+// the same just before and just after it (within a pixel). The hidden window
+// can still be resizing when it is first shown, and a picture taken then
+// would be cropped at the wrong scale. `before`/`after` are
+// { vw, vh, x, y, w, h } in CSS pixels; `shot` is { width, height }.
 export function steadyCapture(before, after, shot) {
-  if (!before || !after || !shot || !(before.vw > 0) || !(before.vh > 0)) return false;
+  if (!before || !after || !shot || !(before.vw > 0) || !(before.vh > 0) || !(shot.width > 0) || !(shot.height > 0)) return false;
   for (const k of ['vw', 'vh', 'x', 'y', 'w', 'h']) if (!(Math.abs(before[k] - after[k]) <= 1)) return false;
-  const sx = shot.width / before.vw;
-  const sy = shot.height / before.vh;
-  return sx > 0 && Math.abs(sx - sy) <= 0.02 * Math.max(sx, sy);
+  return true;
 }
 
 // The notification text for a screenshot-only change.

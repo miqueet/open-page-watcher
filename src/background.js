@@ -605,16 +605,22 @@ async function takeScreenshot(windowId, tabId, watch) {
     if (!area || !(area.w > 0) || !(area.h > 0)) throw new Error('The watched parts take up no space on the page');
     await sleep(300); // let the scroll paint
     shot = await createImageBitmap(await (await fetch(await captureWindow(windowId))).blob());
-    if (steadyCapture(area, await measure(), shot)) break;
+    const after = await measure();
+    if (steadyCapture(area, after, shot)) break;
     shot.close();
-    if (attempt >= 3) throw new Error('The page kept moving or resizing while the screenshot was taken');
+    if (attempt >= 3) {
+      throw new Error(`The page kept moving or resizing while the screenshot was taken (${area.vw}×${area.vh} then ${after?.vw}×${after?.vh})`);
+    }
     await sleep(700);
   }
-  const scale = shot.width / area.vw;
-  const sx = Math.round(area.x * scale);
-  const sy = Math.round(area.y * scale);
-  const sw = Math.max(1, Math.min(shot.width - sx, Math.round(area.w * scale)));
-  const sh = Math.max(1, Math.min(shot.height - sy, Math.round(area.h * scale)));
+  // Chrome doesn't always capture at the viewport's own resolution, nor with
+  // exactly its shape, so each direction is scaled on its own.
+  const scaleX = shot.width / area.vw;
+  const scaleY = shot.height / area.vh;
+  const sx = Math.round(area.x * scaleX);
+  const sy = Math.round(area.y * scaleY);
+  const sw = Math.max(1, Math.min(shot.width - sx, Math.round(area.w * scaleX)));
+  const sh = Math.max(1, Math.min(shot.height - sy, Math.round(area.h * scaleY)));
   // Saved at the area's size in CSS pixels, whatever resolution Chrome
   // captured at (it varies, e.g. for minimized windows), so two checks of the
   // same page always give pictures of the same size.
