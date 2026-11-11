@@ -64,6 +64,7 @@ legend { font-weight: 600; padding: 0 4px; }
 .visual-frame { width: 100%; height: 60vh; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
 .rules { display: grid; gap: 6px; }
 .rule { display: grid; grid-template-columns: 140px 1fr 1fr auto; gap: 6px; }
+.rule .find { grid-column: 2 / 4; font-family: ui-monospace, monospace; font-size: 12px; }
 .days { display: flex; gap: 6px; flex-wrap: wrap; }
 .days label { display: flex; gap: 4px; align-items: center; font-size: 13px; }
 details.log summary { cursor: pointer; margin: 16px 0 8px; font-weight: 500; }

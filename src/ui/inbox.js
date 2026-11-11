@@ -3,7 +3,7 @@ import {
 } from './api.js';
 import { diffText } from '../lib/diff.js';
 import { formatMarks } from '../lib/formatting.js';
-import { RULE_TYPES, RULE_SOURCES, normalizeCondition } from '../lib/conditions.js';
+import { RULE_TYPES, RULE_SOURCES, normalizeCondition, numberFocus } from '../lib/conditions.js';
 import { DEFAULT_INTERVAL_MINUTES, DEFAULT_HISTORY, SIGN_IN_ACTIONS, isHttpUrl } from '../lib/watch.js';
 import { getLog, getSettings, DIGEST_CHOICES } from '../lib/storage.js';
 import { visualDocument, sourceLines } from './visual.js';
@@ -332,8 +332,8 @@ async function renderDetail() {
 
 function numberView(watch, history) {
   if (watch.ignore?.numbers) return null;
-  const numericRule = normalizeCondition(watch.condition).rules.some((r) => RULE_TYPES[r.type]?.numeric);
-  const points = numberSeries(history, { numericRule });
+  const focus = numberFocus(watch.condition);
+  const points = numberSeries(history, { numericRule: focus.numeric, find: focus.find });
   return points ? numberChart(points) : null;
 }
 
@@ -629,20 +629,38 @@ function ruleRow(rule, onRemove) {
   const on = el('select', { 'aria-label': 'Which text' }, Object.entries(RULE_SOURCES).map(([k, v]) => el('option', { value: k }, v)));
   const type = el('select', { 'aria-label': 'Rule' }, Object.entries(RULE_TYPES).filter(([k]) => k !== 'any').map(([k, v]) => el('option', { value: k }, v.label)));
   const value = el('input', { value: rule.value || '', 'aria-label': 'Value' });
+  // Number rules can say which number to read, as a regex whose first group
+  // (or whole match) holds it. Empty means the first number in the text.
+  const find = el('input', {
+    class: 'find',
+    value: rule.find || '',
+    'aria-label': 'Which number',
+    placeholder: 'Which number: leave empty for the first, or a regex like Price:\\s*(\\S+)',
+    spellcheck: 'false',
+  });
   on.value = rule.on || 'text';
   type.value = rule.type || 'contains';
   const sync = () => {
-    const kind = RULE_TYPES[type.value].value;
+    const spec = RULE_TYPES[type.value];
+    const kind = spec.value;
     value.hidden = !kind;
-    value.type = kind === 'number' ? 'number' : 'text';
-    value.placeholder = kind === 'regex' ? 'regular expression' : kind === 'number' ? 'number' : 'text';
-    on.disabled = /^number(In|De)creased/.test(type.value) || type.value === 'neverSeen' || RULE_TYPES[type.value].size === true;
+    value.type = 'text';
+    value.inputMode = kind === 'number' ? 'decimal' : 'text';
+    value.placeholder = kind === 'regex' ? 'regular expression'
+      : kind === 'number' ? (spec.numeric ? 'e.g. 1200 or $1,200' : 'number') : 'text';
+    on.disabled = spec.compares === true || type.value === 'neverSeen' || spec.size === true;
+    find.hidden = !spec.numeric;
   };
   type.addEventListener('change', sync);
   sync();
   const row = el('div', { class: 'rule' }, on, type, value,
-    el('button', { type: 'button', 'aria-label': 'Remove rule', onclick: () => onRemove(row) }, '✕'));
-  row.read = () => ({ on: on.value, type: type.value, value: value.hidden ? '' : value.value });
+    el('button', { type: 'button', 'aria-label': 'Remove rule', onclick: () => onRemove(row) }, '✕'),
+    find);
+  row.read = () => {
+    const r = { on: on.value, type: type.value, value: value.hidden ? '' : value.value };
+    if (!find.hidden && find.value.trim()) r.find = find.value.trim();
+    return r;
+  };
   return row;
 }
 
