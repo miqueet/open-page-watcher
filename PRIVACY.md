@@ -1,6 +1,6 @@
 # Privacy policy
 
-_Last updated: 13 October 2026_
+_Last updated: 11 November 2026_
 
 Open Page Watcher is an open-source browser extension that checks web pages you
 choose for changes. It is built so that your data never leaves your browser.
@@ -55,6 +55,21 @@ If you use **Export**, the extension creates a file on your computer containing
 your watches and settings. You can protect it with a password, in which case it
 is encrypted on your computer before it is saved. Where that file goes is up to
 you.
+
+## How the page content is used
+
+The extension reads the content of the pages you choose to watch (and, in live
+mode, the tab you chose to watch). That content is used for one purpose only:
+to work out what changed and show it to you. It is processed and stored on
+your device. It is never sold, never transferred to anyone, never used for
+advertising, and never used to determine credit-worthiness or for lending.
+Nobody, including the developer, can read it.
+
+## Donations
+
+**Settings → About** shows a Bitcoin address you can copy if you would like to
+support the developer. Copying it is entirely up to you; the extension never
+connects to any payment or cryptocurrency service.
 
 ## Changes and contact
 
