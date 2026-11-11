@@ -62,6 +62,18 @@ export function changedCells(a, b, width, height, cell = 12, tolerance = PIXEL_T
   return boxes;
 }
 
+// Whether a capture can be trusted: the viewport and the watched area were
+// the same just before and just after it (within a pixel), and the picture
+// has the viewport's shape. `before`/`after` are { vw, vh, x, y, w, h } in CSS
+// pixels; `shot` is { width, height } in captured pixels.
+export function steadyCapture(before, after, shot) {
+  if (!before || !after || !shot || !(before.vw > 0) || !(before.vh > 0)) return false;
+  for (const k of ['vw', 'vh', 'x', 'y', 'w', 'h']) if (!(Math.abs(before[k] - after[k]) <= 1)) return false;
+  const sx = shot.width / before.vw;
+  const sy = shot.height / before.vh;
+  return sx > 0 && Math.abs(sx - sy) <= 0.02 * Math.max(sx, sy);
+}
+
 // The notification text for a screenshot-only change.
 export function describeShotChange(percent, { resized = false } = {}) {
   if (resized) return 'Looks different: the watched area changed size.';

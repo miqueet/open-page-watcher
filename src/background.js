@@ -2,7 +2,7 @@ import { extractText } from './lib/extract.js';
 import { formatChanged, summarizeFormat } from './lib/formatting.js';
 import { markupChanged, summarizeMarkup } from './lib/markup.js';
 import {
-  pixelDifference, sameShape, describeShotChange, COMPARE_WIDTH,
+  pixelDifference, sameShape, describeShotChange, steadyCapture, COMPARE_WIDTH,
 } from './lib/shots.js';
 import { conditionMet, changedText, numberFocus } from './lib/conditions.js';
 import { selectJson, jsonValuesText } from './lib/jsonpath.js';
@@ -593,10 +593,23 @@ async function captureWindow(windowId) {
 // A WebP picture of the watched parts (or the top of the page), as a data URL.
 async function takeScreenshot(windowId, tabId, watch) {
   const selectors = watch.selectors.filter((s) => s.type === 'css' || s.type === 'xpath');
-  const [{ result: area } = {}] = await chrome.scripting.executeScript({ target: { tabId }, func: screenshotArea, args: [selectors] });
-  if (!area || !(area.w > 0) || !(area.h > 0)) throw new Error('The watched parts take up no space on the page');
-  await sleep(300); // let the scroll paint
-  const shot = await createImageBitmap(await (await fetch(await captureWindow(windowId))).blob());
+  const measure = async () => (await chrome.scripting.executeScript({ target: { tabId }, func: screenshotArea, args: [selectors] }))[0]?.result;
+  let area;
+  let shot;
+  // The hidden window can still be resizing, or the page moving, while the
+  // picture is taken. Measure before and after, and keep the picture only if
+  // nothing moved and it matches the measured viewport; otherwise the same
+  // page would look different from one check to the next.
+  for (let attempt = 0; ; attempt++) {
+    area = await measure();
+    if (!area || !(area.w > 0) || !(area.h > 0)) throw new Error('The watched parts take up no space on the page');
+    await sleep(300); // let the scroll paint
+    shot = await createImageBitmap(await (await fetch(await captureWindow(windowId))).blob());
+    if (steadyCapture(area, await measure(), shot)) break;
+    shot.close();
+    if (attempt >= 3) throw new Error('The page kept moving or resizing while the screenshot was taken');
+    await sleep(700);
+  }
   const scale = shot.width / area.vw;
   const sx = Math.round(area.x * scale);
   const sy = Math.round(area.y * scale);
