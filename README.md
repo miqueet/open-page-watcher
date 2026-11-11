@@ -110,6 +110,15 @@ from any other proprietary extension.
   or italic, becoming a heading, list item or table cell, links pointing
   somewhere else, and colors, sizes or hiding set in the page's own markup.
   The Formatting tab shows what changed
+- Optionally count HTML changes: an element or attribute changing even when
+  the words don't, like an "Add to cart" button becoming `disabled`, a class
+  switching from `in-stock` to `sold-out`, or an image or link pointing
+  somewhere new. Attributes that change on every visit (`data-*`, `style`) can
+  be ignored. The HTML tab shows what changed
+- Optionally compare screenshots of the watched parts (for pages opened in a
+  hidden window), with a sensitivity setting. The Screenshot tab shows the
+  older and newer pictures with the changed areas outlined. See
+  [HTML and visual changes](docs/html-and-visual-changes.md) for examples
 - Pause a watch after its first alert, for one-off events like a restock
 - Notifications that say what changed ("Went down from $1,299 to $1,199
   (−7.7%), now below $1,200"),
@@ -120,7 +129,8 @@ from any other proprietary extension.
 **Reviewing changes**
 - Inbox with unread changes, labels, filters, search, bulk actions and keyboard
   shortcuts
-- Text, side-by-side, visual and source views of any two saved versions
+- Text, side-by-side, formatting, HTML, screenshot, visual and source views of
+  any two saved versions
 - A chart of the number on the page over time
 - Open the page with what changed highlighted
 - A log of recent checks for each watch
@@ -198,6 +208,34 @@ examples you can copy into the watch editor:
 | `contextMenus` | The "Watch this page" right-click items |
 | `tts` | Read changes aloud, if you turn that on for a watch (on-device voices only) |
 | Site access (optional, per site) | Requested only for sites you watch, and released when you stop |
+| Access to all sites (optional) | Only if you turn on screenshots for a watch: Chrome lets an extension screenshot a tab only with this. Given back when no watch takes screenshots. Checks still only load the pages you chose |
+
+### Screenshots and "access to all sites"
+
+Screenshot comparison is the only feature that needs more than access to the
+sites you watch, and it is **off unless you turn it on** for a watch.
+
+- **Why:** Chrome only lets an extension take a screenshot of a tab when it has
+  access to all sites. Access to the individual site isn't enough (this was
+  tested). There is no narrower permission that allows it.
+- **When it's asked for:** only when you tick **Also compare screenshots** on a
+  watch and save. Chrome shows its usual prompt; if you decline, nothing changes
+  and the watch is not saved with screenshots on.
+- **When it's given back:** as soon as no watch uses screenshots (you turn the
+  option off or delete the watch), and again whenever Chrome starts if nothing
+  uses it.
+- **What it's used for while held:** taking a picture of the hidden window the
+  extension opened for that watch's page. Nothing else. Checks, redirects and
+  frames still only go to sites you added watches for; holding access to all
+  sites never counts as permission to read another site.
+- **For IT teams:** the `disableScreenshots` policy removes the option, so the
+  extension never asks for access to all sites (see
+  [docs/enterprise.md](docs/enterprise.md)).
+- **If you'd rather not grant it:** leave screenshots off. **Also watch the
+  HTML** and **Also watch formatting** catch many visual changes (a class,
+  `disabled`, an image address, inline colors) with no extra permission.
+
+See [HTML and visual changes](docs/html-and-visual-changes.md) for examples.
 
 ## Development
 

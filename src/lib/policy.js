@@ -43,6 +43,7 @@ export function normalizePolicy(raw = {}) {
     disableCookies: raw.disableCookies === true,
     disableRenderInTab: raw.disableRenderInTab === true,
     disableLiveMode: raw.disableLiveMode === true,
+    disableScreenshots: raw.disableScreenshots === true,
     minIntervalMinutes: int(raw.minIntervalMinutes),
     maxWatches: int(raw.maxWatches),
   };
@@ -50,7 +51,7 @@ export function normalizePolicy(raw = {}) {
 
 export function isManaged(policy) {
   return Boolean(policy.allowedSites || policy.blockedSites.length || policy.disableCookies
-    || policy.disableRenderInTab || policy.disableLiveMode || policy.minIntervalMinutes || policy.maxWatches);
+    || policy.disableRenderInTab || policy.disableLiveMode || policy.disableScreenshots || policy.minIntervalMinutes || policy.maxWatches);
 }
 
 function covers(entry, host) {
@@ -79,6 +80,8 @@ export function applyPolicy(policy, watch) {
   }
   if (policy.disableRenderInTab || policy.disableCookies) w.mode = 'fetch';
   if (policy.disableLiveMode) w.live = false;
+  // Screenshots are taken of the hidden window, and need access to all sites.
+  if (policy.disableScreenshots || w.mode !== 'tab') w.watchScreenshot = false;
   if (policy.minIntervalMinutes && w.intervalMinutes < policy.minIntervalMinutes) w.intervalMinutes = policy.minIntervalMinutes;
   if (w.schedule && policy.minIntervalMinutes && w.schedule.randomMaxMinutes < w.intervalMinutes) {
     w.schedule.randomMaxMinutes = w.intervalMinutes;

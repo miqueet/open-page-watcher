@@ -61,6 +61,21 @@ Additions that common monitors don't offer as local features:
   false alerts. Not used with the regex filter, attribute selectors (their
   value is compared as is), PDFs, JSON or feeds. Versions saved before it was
   turned on have no formatting and are never a formatting change
+- HTML changes, per watch and off by default ("Also watch the HTML"). It
+  compares the elements and attributes of the snapshot already kept for the
+  visual view (scripts, styles, event handlers and private form fields are
+  never in it), with attributes sorted so their order doesn't count, and text
+  left to the text comparison so its ignore options still hold. `nonce` is
+  always ignored, and the user can ignore more by name or prefix (`data-*`).
+  Summaries name what changed: "HTML changed: <button> gained disabled"
+- Screenshot comparison, per watch and off by default ("Also compare
+  screenshots"), for watches read in the hidden window. The watched parts are
+  scrolled into view and captured with `chrome.tabs.captureVisibleTab`,
+  cropped, scaled to at most 1000×2000 and kept as WebP for the ten most
+  recent versions. A change is counted when at least the chosen percentage of
+  pixels (default 1%) differs, or the area changes size. The Screenshot tab
+  outlines the changed areas. See the security model for the permission it
+  needs
 - Organization policy through Chrome managed storage ([enterprise.md](enterprise.md))
 
 ## Deliberately left out
@@ -79,8 +94,6 @@ These run on the device but were left out as security trade-offs:
   signed-in user on the page
 - Custom JavaScript selectors and conditions, because they would mean running
   user-supplied code with the extension's privileges
-- Screenshot (pixel) comparison, as in Visualping: capturing tabs needs access
-  to every site (`<all_urls>`). The sandboxed visual view covers the use case
 - Proxies, custom request headers and POST requests: headers would mean
   storing tokens next to the watches, and proxies send pages through a third
   party
@@ -99,6 +112,15 @@ These run on the device but were left out as security trade-offs:
    for it (after checking organization policy), and released when you delete
    the last watch on that origin, cancel the picker, or a save fails. Access no
    watch uses is also cleaned up when the browser starts.
+   The one exception is screenshot comparison: `captureVisibleTab` only works
+   with `<all_urls>` (or `activeTab`, which a timer can't have). It is optional,
+   asked for in the same prompt as the site when the user turns screenshots on
+   for a watch, released as soon as no watch uses screenshots (and at browser
+   start), and can be ruled out by organization policy (`disableScreenshots`).
+   While it is held it never counts as access to a site: checks, redirects and
+   frames still need the site's own grant or a watch the user added for it, and
+   only the hidden window the extension opened for the watched page is
+   captured.
 3. **No remote code.** Manifest V3, no `eval`, no CDN scripts, no build step and
    no third-party dependencies (the PDF reader is written from scratch). Every
    file in `src/` is the code that runs.
@@ -191,6 +213,8 @@ These run on the device but were left out as security trade-offs:
 - `src/lib/pdf.js`: dependency-free PDF text extraction.
 - `src/lib/feeds.js`: RSS, Atom and sitemap reading.
 - `src/lib/diff.js`: Myers diff (lines, then words).
+- `src/lib/formatting.js`, `src/lib/markup.js`, `src/lib/shots.js`: formatting,
+  HTML and screenshot comparison.
 - `src/lib/conditions.js`: alert rules.
 - `src/lib/jsonpath.js`: the JSON path subset (parsed, never evaluated).
 - `src/lib/csv.js`: CSV export of saved versions.

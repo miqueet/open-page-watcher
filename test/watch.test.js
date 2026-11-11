@@ -165,6 +165,27 @@ test('alert sound choice is cleaned', () => {
   }
 });
 
+test('HTML and screenshot watching are off unless asked for, and cleaned', () => {
+  const plain = sanitizeWatch({ url: 'https://a.example/' });
+  assert.equal(plain.watchHtml, false);
+  assert.deepEqual(plain.ignoreAttributes, []);
+  assert.equal(plain.watchScreenshot, false);
+  assert.equal(plain.screenshotThreshold, 1);
+  const w = sanitizeWatch({
+    url: 'https://a.example/', mode: 'tab', watchHtml: true, ignoreAttributes: 'style, data-*', watchScreenshot: true, screenshotThreshold: 99,
+  });
+  assert.equal(w.watchHtml, true);
+  assert.deepEqual(w.ignoreAttributes, ['style', 'data-*']);
+  assert.equal(w.watchScreenshot, true);
+  assert.equal(w.screenshotThreshold, 50);
+  assert.equal(sanitizeWatch({ url: 'https://a.example/', screenshotThreshold: 0.04 }).screenshotThreshold, 0.1);
+  assert.equal(sanitizeWatch({ url: 'https://a.example/', screenshotThreshold: 'x' }).screenshotThreshold, 1);
+});
+
+test('screenshots need the hidden-window mode', () => {
+  assert.throws(() => sanitizeWatch({ url: 'https://a.example/', watchScreenshot: true }), /hidden window/);
+});
+
 test('number rules need a number and a valid which-number regex', () => {
   const rule = (r) => sanitizeWatch({ url: 'https://example.com/', condition: { rules: [{ on: 'text', ...r }] } });
   assert.equal(rule({ type: 'numberCrossedBelow', value: '1200 dollars' }).condition.rules[0].value, '1200 dollars');

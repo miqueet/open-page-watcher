@@ -29,6 +29,8 @@ let trackerHits = 0;
 let ssoHits = 0;
 let feedItems = ['Hello world', 'Second post'];
 let styled = '<p>Sale ends <span>Friday</span></p>';
+let buyButton = '<button class="buy" data-ts="1">Add to cart</button>';
+let shotColor = 'green';
 const server = http.createServer((req, res) => {
   if (req.url === '/product') {
     cookieSeen = req.headers.cookie || '';
@@ -93,6 +95,15 @@ const server = http.createServer((req, res) => {
   if (req.url === '/styled') {
     res.setHeader('content-type', 'text/html');
     return res.end(`<!doctype html><title>Styled</title><div id="box">${styled}</div>`);
+  }
+  if (req.url === '/markup') {
+    res.setHeader('content-type', 'text/html');
+    return res.end(`<!doctype html><title>Markup</title><div id="box"><p>Widget</p>${buyButton}</div>`);
+  }
+  if (req.url === '/look') {
+    res.setHeader('content-type', 'text/html');
+    return res.end(`<!doctype html><title>Look</title><style>body{margin:0}#box{width:300px;height:120px;background:${shotColor}}</style>
+      <div id="box">Same text</div>`);
   }
   if (req.url === '/broken') {
     res.statusCode = 500;
@@ -373,6 +384,49 @@ try {
     styled = '<p>Sale ends <span>Friday</span></p>';
     await send({ type: 'deleteWatch', id });
     await send({ type: 'deleteWatch', id: plain });
+  });
+
+  await step('HTML changes count only when the watch asks for them', async () => {
+    const watch = { url: `${base}/markup`, selectors: [{ type: 'css', expr: '#box' }] };
+    const plain = (await send({ type: 'createWatch', watch })).id;
+    const id = (await send({ type: 'createWatch', watch: { ...watch, watchHtml: true, ignoreAttributes: 'data-*' } })).id;
+    assert.equal((await watchOf(plain)).watchHtml, false, 'off by default');
+    assert.deepEqual((await watchOf(id)).ignoreAttributes, ['data-*']);
+    await waitFor(async () => (await history(id)).length === 1 && (await history(plain)).length === 1);
+    // Only an ignored attribute changes: nothing to report.
+    buyButton = '<button class="buy" data-ts="2">Add to cart</button>';
+    await send({ type: 'checkNow', id });
+    assert.equal((await history(id)).length, 1, 'ignored attributes are not changes');
+    buyButton = '<button class="buy sold-out" disabled data-ts="3">Add to cart</button>';
+    await send({ type: 'checkNow', id: plain });
+    await send({ type: 'checkNow', id });
+    assert.equal((await history(plain)).length, 1, 'the text is the same');
+    const h = await history(id);
+    assert.equal(h.length, 2);
+    assert.equal(h[1].text, h[0].text);
+    const w = await watchOf(id);
+    assert.equal(w.unread, true);
+    assert.equal(w.lastSummary, 'HTML changed: <button> gained disabled and class changed');
+    await page.evaluate((watchId) => { location.hash = `#/w/${watchId}`; }, id);
+    await page.waitForSelector('text=The text is the same, but the HTML');
+    await page.click('.tabs button[data-view="html"]');
+    await page.waitForSelector('.diff ins');
+    assert.match(await page.textContent('.diff'), /<button class="buy/);
+    assert.match(await page.textContent('.diff ins'), /sold-out|disabled/);
+    await page.click('.tabs button[data-view="text"]');
+    await page.evaluate((watchId) => { location.hash = `#/w/${watchId}/edit`; }, id);
+    await page.waitForSelector('text=Also watch the HTML');
+    assert.equal(await page.isChecked('label.check:has-text("Also watch the HTML") input'), true);
+    assert.equal(await page.inputValue('label.field:has-text("Attributes to ignore") input'), 'data-*');
+    buyButton = '<button class="buy" data-ts="1">Add to cart</button>';
+    await send({ type: 'deleteWatch', id });
+    await send({ type: 'deleteWatch', id: plain });
+  });
+
+  await step('screenshots need the hidden-window mode', async () => {
+    const res = await send({ type: 'createWatch', watch: { url: `${base}/look`, watchScreenshot: true } });
+    assert.equal(res.ok, false);
+    assert.match(res.error, /hidden window/);
   });
 
   await step('several pages can be added at once and history downloads as CSV', async () => {
@@ -1114,6 +1168,69 @@ try {
     const p = await context.newPage();
     await p.goto(`chrome-extension://${extId}/src/ui/popup.html`);
     await p.waitForSelector('#watch-page');
+  });
+
+  // Screenshots need access to all sites, which the main test copy doesn't
+  // have, so they run in a second copy that has it.
+  await step('screenshots are compared and shown with the changes outlined', async () => {
+    const shotExt = fs.mkdtempSync(path.join(os.tmpdir(), 'opw-ext-shots-'));
+    fs.cpSync(extDir, shotExt, { recursive: true });
+    fs.writeFileSync(path.join(shotExt, 'manifest.json'), JSON.stringify({ ...manifest, host_permissions: ['http://127.0.0.1/*', '<all_urls>'] }));
+    const ctx = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(os.tmpdir(), 'opw-profile-shots-')), {
+      headless: true,
+      channel: 'chromium',
+      executablePath: process.env.CHROMIUM || undefined,
+      args: [`--disable-extensions-except=${shotExt}`, `--load-extension=${shotExt}`],
+    });
+    try {
+      let [worker] = ctx.serviceWorkers();
+      worker ||= await ctx.waitForEvent('serviceworker');
+      const p = await ctx.newPage();
+      p.on('pageerror', (e) => { failed = true; console.log('page error:', e.message); });
+      await p.goto(`chrome-extension://${new URL(worker.url()).host}/src/ui/inbox.html`);
+      const sendTo = (msg) => p.evaluate((m) => chrome.runtime.sendMessage(m), msg);
+      const historyOf = (id) => p.evaluate(async (k) => (await chrome.storage.local.get(k))[k] || [], `history:${id}`);
+      const watchIn = (id) => p.evaluate(async (i) => (await chrome.storage.local.get('watches')).watches[i], id);
+      shotColor = 'green';
+      const res = await sendTo({
+        type: 'createWatch',
+        watch: { url: `${base}/look`, selectors: [{ type: 'css', expr: '#box' }], mode: 'tab', renderDelaySeconds: 0, watchScreenshot: true },
+      });
+      assert.equal(res.ok, true, res.error);
+      const { id } = res;
+      await waitFor(async () => (await historyOf(id)).length === 1, 30000);
+      const first = (await historyOf(id))[0];
+      assert.match(first.shot || '', /^data:image\/webp;base64,/, (await p.evaluate(async (k) => JSON.stringify((await chrome.storage.local.get(k))[k]), `log:${id}`)));
+      const size = await p.evaluate((src) => new Promise((ok) => {
+        const img = new Image();
+        img.onload = () => ok([img.naturalWidth, img.naturalHeight]);
+        img.src = src;
+      }), first.shot);
+      assert.ok(size[0] >= 300 && size[0] <= 340 && size[1] >= 120 && size[1] <= 160, `cropped to the watched part: ${size}`);
+      await sendTo({ type: 'checkNow', id });
+      assert.equal((await historyOf(id)).length, 1, `the same picture is not a change: ${(await watchIn(id)).lastSummary}`);
+      shotColor = 'red';
+      await sendTo({ type: 'checkNow', id });
+      const h = await historyOf(id);
+      assert.equal(h.length, 2, 'a different picture is a change');
+      assert.equal(h[1].text, h[0].text);
+      const w = await watchIn(id);
+      assert.equal(w.unread, true);
+      assert.match(w.lastSummary, /^Looks different: \d+% of the screenshot changed\.$/);
+      await p.evaluate((watchId) => { location.hash = `#/w/${watchId}`; }, id);
+      await p.waitForSelector('text=The text is the same, but the screenshot');
+      await p.click('.tabs button[data-view="shot"]');
+      await p.waitForSelector('canvas.shot');
+      await p.waitForSelector('text=Changed areas are outlined');
+      // Turning screenshots off gives access to all sites back (here it is
+      // part of the test manifest, so Chrome keeps it; the call must not fail).
+      const off = await sendTo({ type: 'updateWatch', watch: { ...w, watchScreenshot: false } });
+      assert.equal(off.ok, true, off.error);
+      assert.equal((await watchIn(id)).watchScreenshot, false);
+    } finally {
+      shotColor = 'green';
+      await ctx.close();
+    }
   });
 
   if (process.env.SHOT_DIR) {

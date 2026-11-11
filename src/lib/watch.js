@@ -2,6 +2,7 @@ import { normalizeCondition, RULE_TYPES } from './conditions.js';
 import { parseThreshold } from './numbers.js';
 import { parseJsonPath } from './jsonpath.js';
 import { soundName } from './sounds.js';
+import { cleanIgnoreAttributes } from './markup.js';
 
 export const MIN_INTERVAL_MINUTES = 1;
 export const MAX_INTERVAL_MINUTES = 7 * 24 * 60;
@@ -43,6 +44,12 @@ export function sameDocument(a, b) {
 function str(value, fallback = '') {
   if (typeof value !== 'string') return fallback;
   return value.slice(0, MAX_STRING);
+}
+
+function clampNumber(value, min, max, fallback) {
+  const n = Number(value);
+  if (value === null || value === '' || !Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(n * 10) / 10));
 }
 
 function clampInt(value, min, max, fallback) {
@@ -160,6 +167,9 @@ export function sanitizeWatch(input, existing = {}) {
     if (selectors.some((s) => s.type !== 'json')) throw new Error("JSON paths can't be mixed with CSS or XPath selectors");
     if (src.mode === 'tab' || src.live === true) throw new Error('JSON paths only work when the page is downloaded, not opened in a tab');
   }
+  if (src.watchScreenshot === true && src.mode !== 'tab') {
+    throw new Error('Screenshots need the page opened in a hidden window. Choose that under “How to load the page”.');
+  }
   const intervalMinutes = clampInt(src.intervalMinutes, MIN_INTERVAL_MINUTES, MAX_INTERVAL_MINUTES, DEFAULT_INTERVAL_MINUTES);
   if (schedule.randomMaxMinutes < intervalMinutes) schedule.randomMaxMinutes = intervalMinutes;
 
@@ -197,6 +207,15 @@ export function sanitizeWatch(input, existing = {}) {
     // Also count changes to formatting (bold, headings, links, colors...),
     // not just the text.
     watchFormatting: src.watchFormatting === true,
+    // Also count changes to the HTML elements and attributes (a button
+    // becoming disabled, a class or image changing), not just the text.
+    watchHtml: src.watchHtml === true,
+    // Attributes HTML watching leaves out: names, or prefixes like data-*.
+    ignoreAttributes: cleanIgnoreAttributes(src.ignoreAttributes),
+    // Also compare a screenshot of the page (needs the hidden-tab mode).
+    watchScreenshot: src.watchScreenshot === true,
+    // Percent of the screenshot that has to differ to count as a change.
+    screenshotThreshold: clampNumber(src.screenshotThreshold, 0.1, 50, 1),
     ignore: {
       case: src.ignore?.case === true,
       whitespace: src.ignore?.whitespace === true,
