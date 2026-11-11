@@ -185,3 +185,11 @@ test('HTML and screenshot watching are off unless asked for, and cleaned', () =>
 test('screenshots need the hidden-window mode', () => {
   assert.throws(() => sanitizeWatch({ url: 'https://a.example/', watchScreenshot: true }), /hidden window/);
 });
+
+test('number rules need a number and a valid which-number regex', () => {
+  const rule = (r) => sanitizeWatch({ url: 'https://example.com/', condition: { rules: [{ on: 'text', ...r }] } });
+  assert.equal(rule({ type: 'numberCrossedBelow', value: '1200 dollars' }).condition.rules[0].value, '1200 dollars');
+  assert.throws(() => rule({ type: 'numberBelow', value: 'cheap' }), /needs a number/);
+  assert.throws(() => rule({ type: 'numberBelow', value: '5', find: '(' }));
+  assert.equal(rule({ type: 'changedLinesAbove', value: '' }).condition.rules[0].value, '');
+});

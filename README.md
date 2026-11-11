@@ -77,6 +77,11 @@ from any other proprietary extension.
   matches a regex, length, never seen before, number above or below, and number
   up or down by an amount or a percentage, checked on the new, added, removed or
   previous text
+- Number limits: alert when a price or count is below or above a number, or
+  only once when it drops below or rises above it. Type the limit the way you
+  would write it (`1200`, `$1,200`, `1200 dollars`, `1.2k`). Prices like
+  `1.299,00 €` and `12,50` are read correctly. If the text holds several
+  numbers, give a regex such as `Price:\s*(\S+)` to say which one to read
 - Alert only on bigger changes: more than a number of lines, or a percentage
   of the text
 - Ignore changes that are only dates, numbers, letter case, spacing or the
@@ -95,7 +100,8 @@ from any other proprietary extension.
   older and newer pictures with the changed areas outlined. See
   [HTML and visual changes](docs/html-and-visual-changes.md) for examples
 - Pause a watch after its first alert, for one-off events like a restock
-- Notifications that say what changed ("Went down from $1,299 to $1,199"),
+- Notifications that say what changed ("Went down from $1,299 to $1,199
+  (−7.7%), now below $1,200"),
   an optional sound (pick from six, with a preview), or the change read aloud
 - Quiet hours, and an option to combine alerts into one summary
 - An alert when a watch keeps failing
@@ -207,7 +213,8 @@ and give a 👍 to the ones you want, which helps decide what comes next.
 
 Anything that keeps your data on your computer is in scope. Requests that would
 need a server, an account or sending your data anywhere are not, for the reasons
-above. Found a bug? [Open an issue](https://github.com/miqueet/open-page-watcher/issues/new).
+above. Found a bug? [Report it](https://github.com/miqueet/open-page-watcher/issues/new?template=bug_report.yml).
+The About section at the bottom of Settings links to both forms.
 Security problems go through [SECURITY.md](SECURITY.md) instead.
 
 ## Support the developer

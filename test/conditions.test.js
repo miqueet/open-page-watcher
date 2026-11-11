@@ -86,3 +86,44 @@ test('change size rules', async () => {
   assert.equal(conditionMet(lines, old, small), false);
   assert.equal(conditionMet(lines, old, big), true);
 });
+
+test('number thresholds accept typed amounts and a which-number regex', () => {
+  const one = (rule, a, b) => conditionMet({ rules: [{ on: 'text', ...rule }] }, a, b);
+  assert.equal(one({ type: 'numberBelow', value: '1200 dollars' }, '$1,299', '$1,199'), true);
+  assert.equal(one({ type: 'numberBelow', value: '$1,200' }, '$1,199', '$1,250'), false);
+  assert.equal(one({ type: 'numberBelow', value: 'cheap' }, '$1,299', '$1,199'), false);
+  const page = (price) => `4.5 stars, 812 reviews\nPrice: $${price}`;
+  assert.equal(one({ type: 'numberBelow', value: '10' }, page('1,299'), page('1,199')), true); // reads 4.5
+  assert.equal(one({ type: 'numberBelow', value: '10', find: 'Price:\\s*(\\S+)' }, page('1,299'), page('1,199')), false);
+  assert.equal(one({ type: 'numberDecreased', value: '', find: 'Price:\\s*(\\S+)' }, page('1,299'), page('1,199')), true);
+});
+
+test('crossing rules alert once when the number goes past the limit', () => {
+  const below = (a, b) => conditionMet({ rules: [{ type: 'numberCrossedBelow', value: '$1,200', on: 'text' }] }, a, b);
+  assert.equal(below('$1,299', '$1,199'), true);
+  assert.equal(below('$1,200', '$1,199'), true);
+  assert.equal(below('$1,199', '$1,150'), false); // already below
+  assert.equal(below('$1,150', '$1,250'), false);
+  assert.equal(below('Sold out', '$1,100'), true); // a price that just appeared
+  const above = (a, b) => conditionMet({ rules: [{ type: 'numberCrossedAbove', value: '100', on: 'text' }] }, a, b);
+  assert.equal(above('98 in queue', '102 in queue'), true);
+  assert.equal(above('102 in queue', '110 in queue'), false);
+});
+
+test('empty number values still mean 0', () => {
+  const one = (type, a, b) => conditionMet({ rules: [{ type, value: '', on: 'text' }] }, a, b);
+  assert.equal(one('changedLinesAbove', 'a', 'b'), true);
+  assert.equal(one('numberIncreasedBy', '1', '2'), true);
+});
+
+test('numberFocus and the which-number field', async () => {
+  const { numberFocus } = await import('../src/lib/conditions.js');
+  const condition = { match: 'all', rules: [
+    { type: 'contains', value: 'stock', on: 'text', find: 'ignored' },
+    { type: 'numberCrossedBelow', value: ' $1,200 ', on: 'text', find: 'Price: (.*)' },
+  ] };
+  assert.equal(normalizeCondition(condition).rules[0].find, undefined);
+  assert.equal(normalizeCondition(condition).rules[1].find, 'Price: (.*)');
+  assert.deepEqual(numberFocus(condition), { find: 'Price: (.*)', limits: [{ below: true, n: 1200, label: '$1,200' }], numeric: true });
+  assert.deepEqual(numberFocus(undefined), { find: '', limits: [], numeric: false });
+});

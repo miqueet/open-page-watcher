@@ -15,7 +15,7 @@ code was copied, decompiled or consulted.
 | Check schedule | Every 1 minute to every 7 days (slider or exact value), or random within a range, optionally only during set hours and days |
 | Pages that need JavaScript to render | "Render in tab" mode opens the page in a hidden window, waits, extracts, closes it; can include frames |
 | Live monitoring of an open tab | Yes, opt-in live mode re-reads the tab when its content changes |
-| Conditions before alerting | Rule lists with all/any: text, regex, length, empty, never seen, number thresholds and changes by amount or percent, on new / added / removed / previous text |
+| Conditions before alerting | Rule lists with all/any: text, regex, length, empty, never seen, number thresholds (once on crossing, or whenever past), changes by amount or percent, with an optional regex for which number, on new / added / removed / previous text |
 | Ignore noise | Ignore dates, numbers, letter case or spacing when comparing |
 | Inbox / watchlist with unread state | Yes, with filters, search, labels, bulk actions and keyboard shortcuts |
 | Highlighted changes and history | Text, side-by-side, visual (sandboxed snapshot) and source views between any two saved versions |

@@ -1,6 +1,7 @@
-import { firstNumber } from '../lib/conditions.js';
+import { numberIn } from '../lib/numbers.js';
 
-// "Number history": the first number in each saved version, drawn as a step
+// "Number history": the first number in each saved version (or the one the
+// watch's number rules point at), drawn as a step
 // line over time (a value holds until the next change). Built from plain SVG;
 // the tooltip and table use textContent only.
 
@@ -11,10 +12,10 @@ const PAD = { top: 14, right: 64, bottom: 26, left: 52 };
 // Points for the chart, or null when the history isn't about a number.
 // Shown when at least two versions carry a number and the watched text is
 // short (a price, a count) or the watch has a number rule.
-export function numberSeries(history, { numericRule = false } = {}) {
+export function numberSeries(history, { numericRule = false, find = '' } = {}) {
   const points = [];
   for (const h of history) {
-    const value = firstNumber(h.text);
+    const value = numberIn(h.text, find);
     if (value !== null) points.push({ t: h.t, value });
   }
   if (points.length < 2) return null;

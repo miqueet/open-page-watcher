@@ -740,6 +740,35 @@ try {
     await send({ type: 'deleteWatch', id });
   });
 
+  await step('a number limit alerts once when crossed and says so', async () => {
+    price = '$1,299';
+    const id = (await send({ type: 'createWatch', watch: { url: `${base}/product`, selectors: [{ type: 'css', expr: '#price' }] } })).id;
+    await waitFor(async () => (await history(id)).length === 1);
+
+    // Set the rule up in the editor, the way a person would.
+    await page.evaluate((x) => { location.hash = `#/w/${encodeURIComponent(x)}/edit`; }, id);
+    await page.locator('button:text("+ Add rule")').waitFor();
+    await page.click('button:text("+ Add rule")');
+    const row = page.locator('.rule').last();
+    await row.locator('select[aria-label="Rule"]').selectOption('numberCrossedBelow');
+    assert.equal(await row.locator('input[aria-label="Which number"]').isVisible(), true);
+    await row.locator('input[aria-label="Value"]').fill('1200 dollars');
+    await row.locator('input[aria-label="Which number"]').fill('\\$(\\S+)');
+    await page.click('button.primary:text("Save")');
+    await waitFor(async () => (await watchOf(id)).condition.rules[0]?.type === 'numberCrossedBelow');
+    assert.deepEqual((await watchOf(id)).condition.rules[0], { type: 'numberCrossedBelow', value: '1200 dollars', on: 'text', find: '\\$(\\S+)' });
+    await page.evaluate(() => { location.hash = '#/'; });
+
+    price = '$1,250'; // still above: no alert
+    await send({ type: 'checkNow', id });
+    assert.equal((await watchOf(id)).unread, false);
+    price = '$1,199'; // crossed: alert
+    await send({ type: 'checkNow', id });
+    assert.equal((await watchOf(id)).unread, true);
+    assert.equal((await watchOf(id)).lastSummary, 'Went down from $1,250 to $1,199 (−4.1%), now below 1200 dollars');
+    await send({ type: 'deleteWatch', id });
+  });
+
   await step('opening the page highlights what changed', async () => {
     const id = (await send({ type: 'createWatch', watch: { url: `${base}/product`, selectors: [{ type: 'css', expr: '.stock' }] } })).id;
     await waitFor(async () => (await history(id)).length === 1);

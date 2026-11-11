@@ -1,0 +1,87 @@
+name: Bug report
+description: Something in Open Page Watcher doesn't work the way it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this! Please check the [open bugs](https://github.com/miqueet/open-page-watcher/issues?q=is%3Aissue+is%3Aopen+label%3Abug) first, and add a comment to one that already covers it.
+
+        **Security problems** don't belong here. Please report them privately through [security advisories](https://github.com/miqueet/open-page-watcher/security/advisories/new) instead.
+
+        Issues are public, so leave out private page addresses, sign-in details and anything from your work pages. A made-up example that shows the same problem is perfect.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What went wrong, and what you expected to happen instead.
+      placeholder: |
+        I watch the price on a shop page. It changed from $1,299 to $1,199, but I didn't get a notification.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: How someone else can see the same problem, step by step.
+      placeholder: |
+        1. Add a watch for https://example.com/product
+        2. Click "Pick on page" and pick the price
+        3. Save, then click "Check now"
+    validations:
+      required: true
+  - type: dropdown
+    id: loading
+    attributes:
+      label: How does the watch read the page?
+      description: Shown in the watch's settings under "How to load the page".
+      options:
+        - Download the page without running its scripts (the default)
+        - Open it in a hidden window so its scripts run
+        - Not sure, or not about a watch
+    validations:
+      required: true
+  - type: dropdown
+    id: live
+    attributes:
+      label: Is "Also check instantly while the page is open in a tab" on?
+      options:
+        - "No"
+        - "Yes"
+        - Not sure, or not about a watch
+  - type: input
+    id: version
+    attributes:
+      label: Open Page Watcher version
+      description: Shown in Settings, in the About section at the bottom.
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and operating system
+      description: Find the Chrome version at chrome://version.
+      placeholder: Chrome 131 on Windows 11
+    validations:
+      required: true
+  - type: dropdown
+    id: managed
+    attributes:
+      label: Is your browser managed by your organization?
+      description: Your IT team's policies can turn some features off. Chrome shows "Managed by your organization" in its menu when they apply.
+      options:
+        - "No"
+        - "Yes"
+        - Not sure
+  - type: textarea
+    id: errors
+    attributes:
+      label: Error messages
+      description: Any error shown on the watch, or on the extension's Errors page (chrome://extensions, then Details, then Errors). Remove private addresses first.
+      render: text
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots or anything else that helps. Blur out anything private.

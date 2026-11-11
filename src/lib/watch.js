@@ -1,4 +1,5 @@
-import { normalizeCondition } from './conditions.js';
+import { normalizeCondition, RULE_TYPES } from './conditions.js';
+import { parseThreshold } from './numbers.js';
 import { parseJsonPath } from './jsonpath.js';
 import { soundName } from './sounds.js';
 import { cleanIgnoreAttributes } from './markup.js';
@@ -153,6 +154,10 @@ export function sanitizeWatch(input, existing = {}) {
   if (regexFilter) new RegExp(regexFilter); // throws a readable SyntaxError if invalid
   for (const rule of condition.rules) {
     if (rule.type === 'regex' || rule.type === 'notRegex') new RegExp(rule.value);
+    if (rule.find) new RegExp(rule.find, 'im');
+    if (RULE_TYPES[rule.type].value === 'number' && rule.value.trim() && Number.isNaN(parseThreshold(rule.value))) {
+      throw new Error(`“${RULE_TYPES[rule.type].label}” needs a number, like 1200 or $1,200`);
+    }
   }
   const schedule = cleanSchedule(src);
   const selectors = cleanSelectors(src.selectors, { allowAttr: true });

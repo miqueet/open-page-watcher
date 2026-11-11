@@ -1,36 +1,43 @@
-import { firstNumber, changedText } from './conditions.js';
+import { changedText } from './conditions.js';
+import { readNumber } from './numbers.js';
 import { inWindow } from './watch.js';
 
 // Alert wording and delivery timing (quiet hours, combined summaries).
 // Pure functions; the service worker does the storage and notifications.
-
-const NUMBER_TOKEN = /([$€£¥₹]\s?)?-?\d[\d,]*(?:\.\d+)?/;
 
 function oneLine(text, max) {
   const t = String(text || '').replace(/\s+/g, ' ').trim();
   return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
 }
 
-function withoutFirstNumber(text) {
-  return String(text || '').replace(NUMBER_TOKEN, '#').replace(/\s+/g, ' ').trim();
+function withoutFirstNumber(text, found) {
+  return String(text || '').replace(found.raw, '#').replace(/\s+/g, ' ').trim();
 }
 
 // A short, plain description of what changed, e.g.
 //   "Went down from $1,299.99 to $1,199 (−7.8%)"
+//   "Went down from $1,299 to $1,199 (−7.7%), now below $1,200"
 //   "Added: In stock"
-export function summarizeChange(oldText, newText, max = 300) {
-  const before = firstNumber(oldText);
-  const after = firstNumber(newText);
-  // Lead with the number when it's what changed: the text is short (a price,
-  // a count) or nothing else changed.
-  const numberStory = before !== null && after !== null && before !== after
-    && (String(newText).length <= 300 || withoutFirstNumber(oldText) === withoutFirstNumber(newText));
+// `focus` (from numberFocus) says which number the watch's rules look at and
+// the limits they set, so the wording matches what the user asked for.
+export function summarizeChange(oldText, newText, max = 300, focus = {}) {
+  const find = focus.find || '';
+  const before = readNumber(oldText, find);
+  const after = readNumber(newText, find);
+  // Lead with the number when it's what changed: the rules point at it, the
+  // text is short (a price, a count), or nothing else changed.
+  const numberStory = before && after && before.value !== after.value
+    && (find || String(newText).length <= 300
+      || withoutFirstNumber(oldText, before) === withoutFirstNumber(newText, after));
   if (numberStory) {
-    const from = NUMBER_TOKEN.exec(oldText)[0].trim();
-    const to = NUMBER_TOKEN.exec(newText)[0].trim();
-    const pct = before !== 0 ? ` (${after > before ? '+' : '−'}${Math.abs(((after - before) / before) * 100).toFixed(1)}%)` : '';
-    return oneLine(`${after > before ? 'Went up' : 'Went down'} from ${from} to ${to}${pct}`, max);
+    const b = before.value;
+    const a = after.value;
+    const pct = b !== 0 ? ` (${a > b ? '+' : '−'}${Math.abs(((a - b) / b) * 100).toFixed(1)}%)` : '';
+    const limit = (focus.limits || []).find((l) => (l.below ? a < l.n : a > l.n));
+    const note = limit ? `, now ${limit.below ? 'below' : 'above'} ${limit.label}` : '';
+    return oneLine(`${a > b ? 'Went up' : 'Went down'} from ${before.raw} to ${after.raw}${pct}${note}`, max);
   }
+  if (!before && after && find) return oneLine(`Now ${after.raw}`, max);
   const { added, deleted } = changedText(oldText, newText);
   if (added && deleted) return oneLine(`Now: ${added} · Was: ${deleted}`, max);
   if (added) return oneLine(`Added: ${added}`, max);

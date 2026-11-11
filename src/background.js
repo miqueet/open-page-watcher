@@ -4,7 +4,7 @@ import { markupChanged, summarizeMarkup } from './lib/markup.js';
 import {
   pixelDifference, sameShape, describeShotChange, COMPARE_WIDTH,
 } from './lib/shots.js';
-import { conditionMet, changedText } from './lib/conditions.js';
+import { conditionMet, changedText, numberFocus } from './lib/conditions.js';
 import { selectJson, jsonValuesText } from './lib/jsonpath.js';
 import { highlightChanges, HIGHLIGHT_CSS } from './lib/highlight.js';
 import {
@@ -299,7 +299,7 @@ async function record(watch, result, error, {
     if (formatOnly) summary = summarizeFormat(previous.format, result.format);
     else if (markupOnly) summary = summarizeMarkup(previous.html, result.html, watch.ignoreAttributes);
     else if (shotOnly) summary = describeShotChange(shotOnly.percent, shotOnly);
-    else summary = summarizeChange(previous.text, result.text);
+    else summary = summarizeChange(previous.text, result.text, 300, numberFocus(watch.condition));
   }
   logEntry.alerted = alert;
   if (alert && watch.pauseAfterAlert) logEntry.note = 'Paused after this alert (“Pause after the first alert” is on)';
