@@ -1147,6 +1147,11 @@ async function settingsForm() {
 // About
 
 const DONATION_BTC = 'bc1qgkla5xl804l78dmukx80zerepgkxndmtk0pach';
+const ISSUES_URL = 'https://github.com/miqueet/open-page-watcher/issues';
+
+function externalLink(href, text) {
+  return el('a', { href, target: '_blank', rel: 'noopener noreferrer' }, text);
+}
 
 function aboutSection() {
   const address = el('input', {
@@ -1170,6 +1175,13 @@ function aboutSection() {
   return el('section', { id: 'about', class: 'about' },
     el('h2', {}, 'About'),
     el('p', {}, `Open Page Watcher ${chrome.runtime.getManifest().version}. Free and open source under the MIT license.`),
+    el('p', { class: 'about-links' },
+      'Have an idea or found a problem? ',
+      externalLink(`${ISSUES_URL}/new?template=feature_request.yml`, 'Request a feature'),
+      ' · ',
+      externalLink(`${ISSUES_URL}/new?template=bug_report.yml`, 'Report a bug'),
+      ' · ',
+      externalLink(ISSUES_URL, 'See all issues on GitHub')),
     el('p', {}, 'If you would like to support the developer, please feel free to donate here:'),
     el('div', { class: 'inline' }, el('span', {}, 'Bitcoin (BTC)'), address, copy));
 }
