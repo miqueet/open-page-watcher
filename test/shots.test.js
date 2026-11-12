@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  pixelDifference, changedCells, sameShape, describeShotChange,
+  pixelDifference, changedCells, sameShape, describeShotChange, steadyCapture,
 } from '../src/lib/shots.js';
 
 function image(width, height, paint = () => [255, 255, 255]) {
@@ -42,4 +42,15 @@ test('size changes are spotted and described', () => {
   assert.equal(describeShotChange(37.6), 'Looks different: 38% of the screenshot changed.');
   assert.equal(describeShotChange(0.01), 'Looks different: 0.1% of the screenshot changed.');
   assert.equal(describeShotChange(100, { resized: true }), 'Looks different: the watched area changed size.');
+});
+
+test('a capture is only kept when nothing moved while it was taken', () => {
+  const area = { vw: 800, vh: 600, x: 10, y: 20, w: 300, h: 120 };
+  assert.equal(steadyCapture(area, { ...area }, { width: 1600, height: 1200 }), true);
+  assert.equal(steadyCapture(area, { ...area, y: 20.5 }, { width: 800, height: 600 }), true);
+  assert.equal(steadyCapture(area, area, { width: 0, height: 600 }), false);
+  // The viewport or the watched part changed between measuring and capturing.
+  assert.equal(steadyCapture(area, { ...area, vw: 500 }, { width: 800, height: 600 }), false);
+  assert.equal(steadyCapture(area, { ...area, y: 60 }, { width: 800, height: 600 }), false);
+  assert.equal(steadyCapture(area, undefined, { width: 800, height: 600 }), false);
 });
