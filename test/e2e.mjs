@@ -1207,8 +1207,12 @@ try {
         img.src = src;
       }), first.shot);
       assert.ok(size[0] >= 300 && size[0] <= 340 && size[1] >= 120 && size[1] <= 160, `cropped to the watched part: ${size}`);
-      await sendTo({ type: 'checkNow', id });
-      assert.equal((await historyOf(id)).length, 1, `the same picture is not a change: ${(await watchIn(id)).lastSummary}`);
+      // Several checks, since Chrome doesn't capture a hidden window the same
+      // way every time; none of them may count as a change.
+      for (let i = 0; i < 5; i++) {
+        await sendTo({ type: 'checkNow', id });
+        assert.equal((await historyOf(id)).length, 1, `the same picture is not a change (check ${i + 2}): ${(await watchIn(id)).lastSummary}`);
+      }
       shotColor = 'red';
       await sendTo({ type: 'checkNow', id });
       const h = await historyOf(id);

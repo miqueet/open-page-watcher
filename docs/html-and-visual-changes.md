@@ -113,6 +113,24 @@ the site itself. What the extension does with it is limited:
 On some computers Chrome doesn't draw minimized windows. There, the hidden
 window is shown for a moment, without taking focus, while the picture is taken.
 
+### When a screenshot is skipped
+
+A picture is only compared when it can be trusted, so an unchanged page never
+looks different just because of how Chrome took it:
+
+- The page and the watched parts are measured just before and just after the
+  picture. If anything moved or resized in between (the hidden window is still
+  opening, a banner slides in), the picture is taken again.
+- Chrome sometimes captures only the part of the page that fits in the hidden
+  window. That picture is used only if all of the watched parts are in it;
+  otherwise it is taken again.
+
+After four tries the check goes on without a screenshot: the text is still
+compared, no screenshot alert is raised, and the watch's log says why (for
+example "No screenshot: The screenshot didn't hold the whole watched area").
+The next check tries again. If it keeps happening, pick a smaller part of the
+page.
+
 ### Example: a status light
 
 A status page shows a colored dot whose color comes from the site's

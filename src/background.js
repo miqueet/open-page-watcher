@@ -2,7 +2,7 @@ import { extractText } from './lib/extract.js';
 import { formatChanged, summarizeFormat } from './lib/formatting.js';
 import { markupChanged, summarizeMarkup } from './lib/markup.js';
 import {
-  pixelDifference, sameShape, describeShotChange, steadyCapture, COMPARE_WIDTH,
+  pixelDifference, sameShape, describeShotChange, steadyCapture, captureCrop, COMPARE_WIDTH,
 } from './lib/shots.js';
 import { conditionMet, changedText, numberFocus } from './lib/conditions.js';
 import { selectJson, jsonValuesText } from './lib/jsonpath.js';
@@ -558,7 +558,7 @@ async function screenshotArea(selectors) {
     img.addEventListener('error', r, { once: true });
   }))));
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-  const view = { vw: innerWidth, vh: innerHeight };
+  const view = { vw: innerWidth, vh: innerHeight, dpr: devicePixelRatio };
   if (!rects.length) {
     scrollTo({ top: 0, left: 0, behavior: 'instant' });
     return { ...view, x: 0, y: 0, w: innerWidth, h: innerHeight };
@@ -596,31 +596,30 @@ async function takeScreenshot(windowId, tabId, watch) {
   const measure = async () => (await chrome.scripting.executeScript({ target: { tabId }, func: screenshotArea, args: [selectors] }))[0]?.result;
   let area;
   let shot;
+  let crop;
   // The hidden window can still be resizing, or the page moving, while the
-  // picture is taken. Measure before and after, and keep the picture only if
-  // nothing moved and it matches the measured viewport; otherwise the same
-  // page would look different from one check to the next.
+  // picture is taken, and Chrome sometimes draws only the part of the page
+  // that fits in the window. Measure before and after, and keep the picture
+  // only if nothing moved and it holds the whole watched area; otherwise the
+  // same page would look different from one check to the next.
   for (let attempt = 0; ; attempt++) {
     area = await measure();
     if (!area || !(area.w > 0) || !(area.h > 0)) throw new Error('The watched parts take up no space on the page');
     await sleep(300); // let the scroll paint
     shot = await createImageBitmap(await (await fetch(await captureWindow(windowId))).blob());
     const after = await measure();
-    if (steadyCapture(area, after, shot)) break;
+    const steady = steadyCapture(area, after, shot);
+    crop = steady ? captureCrop(area, shot) : null;
+    if (crop) break;
     shot.close();
     if (attempt >= 3) {
-      throw new Error(`The page kept moving or resizing while the screenshot was taken (${area.vw}×${area.vh} then ${after?.vw}×${after?.vh})`);
+      throw new Error(steady
+        ? `The screenshot didn't hold the whole watched area (${shot.width}×${shot.height} for a ${area.vw}×${area.vh} page)`
+        : `The page kept moving or resizing while the screenshot was taken (${area.vw}×${area.vh} then ${after?.vw}×${after?.vh})`);
     }
     await sleep(700);
   }
-  // Chrome doesn't always capture at the viewport's own resolution, nor with
-  // exactly its shape, so each direction is scaled on its own.
-  const scaleX = shot.width / area.vw;
-  const scaleY = shot.height / area.vh;
-  const sx = Math.round(area.x * scaleX);
-  const sy = Math.round(area.y * scaleY);
-  const sw = Math.max(1, Math.min(shot.width - sx, Math.round(area.w * scaleX)));
-  const sh = Math.max(1, Math.min(shot.height - sy, Math.round(area.h * scaleY)));
+  const { sx, sy, sw, sh } = crop;
   // Saved at the area's size in CSS pixels, whatever resolution Chrome
   // captured at (it varies, e.g. for minimized windows), so two checks of the
   // same page always give pictures of the same size.
