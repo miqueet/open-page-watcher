@@ -1,10 +1,12 @@
 import { cleanWindow } from './watch.js';
+import { cleanKeptSites } from './sites.js';
 
 // All persistent state lives in chrome.storage.local.
 //   watches            -> { [id]: watch }
 //   history:<id>       -> [{ t, text, html?, format?, shot? }] oldest first
 //   log:<id>           -> [{ t, ok, changed, alerted, error, ms, via }] newest last
 //   settings           -> see DEFAULT_SETTINGS
+//   keptSites          -> ['https://example.com/*'] sites allowed on the Site access page
 //
 // Writes are serialized so concurrent checks can't overwrite each other.
 
@@ -85,6 +87,22 @@ export function appendLog(id, entry) {
     log.push(entry);
     while (log.length > LOG_LIMIT) log.shift();
     await chrome.storage.local.set({ [key]: log });
+  });
+}
+
+// Sites the user allowed on the Site access page. Their access is kept even
+// while no watch uses them.
+export async function getKeptSites() {
+  const { keptSites } = await chrome.storage.local.get('keptSites');
+  return cleanKeptSites(keptSites);
+}
+
+export function updateKeptSites(mutator) {
+  return serialize(async () => {
+    const list = await getKeptSites();
+    const next = cleanKeptSites(await mutator(list) ?? list);
+    await chrome.storage.local.set({ keptSites: next });
+    return next;
   });
 }
 

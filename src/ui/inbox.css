@@ -113,3 +113,15 @@ table.shortcuts td:first-child { padding-right: 24px; }
 .about p { margin: 0 0 8px; }
 .about .inline { flex-wrap: wrap; }
 .btc-address { flex: 1 1 320px; min-width: 0; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+.sites h2 { font-size: 15px; margin: 0; }
+.sites > .row h2 { margin-right: auto; }
+.site-add { margin: 16px 0; gap: 8px; }
+.site-add .inline input { flex: 1; }
+.site-broad { margin: 12px 0; }
+.sites-table td { vertical-align: top; }
+.site-name { font-weight: 500; overflow-wrap: anywhere; }
+.site-status.need { color: var(--danger); font-weight: 500; }
+.site-watches { margin: 0; padding-left: 16px; }
+.site-watches li { overflow-wrap: anywhere; }
+.site-more summary { cursor: pointer; font-size: 13px; color: var(--muted); }

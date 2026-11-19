@@ -111,7 +111,12 @@ These run on the device but were left out as security trade-offs:
    permissions**. Access to a site is requested per origin, when you add a watch
    for it (after checking organization policy), and released when you delete
    the last watch on that origin, cancel the picker, or a save fails. Access no
-   watch uses is also cleaned up when the browser starts.
+   watch uses is also cleaned up when the browser starts. The exception is a
+   site the user allowed on the Site access page (stored as `keptSites`): it
+   stays until revoked there or on `chrome://extensions`, and is dropped at
+   browser start if organization policy now blocks it. The Site access page
+   lists every grant with the watches that depend on it and can revoke any of
+   them.
    The one exception is screenshot comparison: `captureVisibleTab` only works
    with `<all_urls>` (or `activeTab`, which a timer can't have). It is optional,
    asked for in the same prompt as the site when the user turns screenshots on
@@ -220,6 +225,8 @@ These run on the device but were left out as security trade-offs:
 - `src/lib/csv.js`: CSV export of saved versions.
 - `src/lib/alerts.js`: change summaries, quiet hours and combined alerts.
 - `src/lib/policy.js`: organization policy.
+- `src/lib/sites.js`: the Site access list (which sites are allowed, kept, or
+  needed, and by which watches).
 - `src/lib/signin.js`: spotting sign-in pages.
 - `src/lib/backup.js`: password-protected backups.
 - `src/lib/highlight.js`: highlights changes on an opened page.
