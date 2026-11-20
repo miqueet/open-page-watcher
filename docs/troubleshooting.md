@@ -69,6 +69,16 @@ page (View source) and search for the text. If it isn't there, the page builds i
 with JavaScript: switch to **Open it in a hidden window** under "How to load the
 page".
 
+## "Only part of a config or code file is captured, without its indentation"
+
+The file is shown in a code editor, which draws only the lines on screen. Use
+**Open it in a hidden window** so the editor's whole text can be read; see
+[Code editors](loading-pages.md#code-editors-config-files-scripts-queries). If
+the editor sits inside a frame, also tick **Include content inside frames on
+the page**. Still short? Download the diagnostics file (below) and look at
+`testCheck.frames[].editors`: `"source": "model"` means the whole text was
+read, `"screen"` means only the drawn lines were.
+
 ## "The number alert reads the wrong number"
 
 Number rules and the chart use the first number in the watched text unless the
@@ -81,10 +91,47 @@ See [Which number](alerts.md#which-number).
 Checks run inside Chrome. When the computer sleeps or Chrome is closed, no
 checks run; due checks run soon after Chrome is back.
 
+## Download diagnostics
+
+Open the watch in the inbox and click **Diagnostics**. The extension checks the
+page right away, the way the watch does, but saves nothing and sends no alert.
+Then it downloads a JSON file describing:
+
+- the extension and Chrome versions, and any organization policy in effect;
+- the watch's settings (how the page is loaded, selectors, frames, filters,
+  ignore options, alert rules) and its current state (last check, last error);
+- the test check: whether the site is allowed, the HTTP status and content
+  type (downloads) or load time (hidden tab), every frame that was read with
+  its own frames, the code editors found and whether their whole text was
+  read, how much was captured, and how long it took;
+- the last three saved versions and the last 15 checks.
+
+It is built to be safe to share:
+
+- **Captured text is left out** unless you tick **Include the captured text**.
+  Without it the file only has sizes, line counts (blank and indented lines
+  too) and a SHA-256 fingerprint, which is enough to tell whether two captures
+  are the same.
+- **Addresses are hidden** unless you tick **Include page addresses and the
+  watch name**: every host becomes `site-1`, `site-2`… (the same host keeps the
+  same name, so you can still tell frames from other sites apart), paths become
+  `(path hidden)`, and the watch's name and labels are left out. Selectors,
+  filters and rules are included as you wrote them.
+- Cookies, request headers and anything typed into a page are never part of
+  it.
+
+Read it before you send it; it is plain JSON.
+
+**Example:** a watch on a config page keeps only 57 lines. The diagnostics file
+shows `"includeFrames": false`, one frame with `"editors": [{ "kind":
+"monaco", "source": "screen", "lines": 57 }]` and `"captured": { "lines": 57,
+"indentedLines": 0 }`: the editor was found but its full text couldn't be
+reached, which is what to report.
+
 ## Still stuck?
 
-[Open an issue](https://github.com/miqueet/open-page-watcher/issues/new) with
-the watch's settings (Edit, then copy the fields; leave out private
-addresses), the error from the check log, and your Chrome version from
-`chrome://version`. Security problems go through
-[SECURITY.md](../SECURITY.md) instead.
+[Open an issue](https://github.com/miqueet/open-page-watcher/issues/new) and
+attach the [diagnostics file](#download-diagnostics), or the watch's settings
+(Edit, then copy the fields; leave out private addresses), the error from the
+check log, and your Chrome version from `chrome://version`. Security problems
+go through [SECURITY.md](../SECURITY.md) instead.

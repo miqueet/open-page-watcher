@@ -17,13 +17,13 @@ New here? Read [Getting started](getting-started.md), then pick a recipe from
 | [Regular expressions](regex.md) | The four places regex is used, how each one behaves, and a cheat sheet |
 | [Alert rules and notifications](alerts.md) | Every alert rule (including "notify me when the price drops below $1,200" and picking which number), sounds, spoken alerts, quiet hours and summaries |
 | [Ignoring noise](ignoring-noise.md) | Ignoring dates, numbers, case, spacing, line order and whole lines, plus change-size rules |
-| [Loading pages](loading-pages.md) | Downloading vs. a hidden tab vs. live mode, pages behind a sign-in, script-only pages, PDFs, feeds and JSON |
+| [Loading pages](loading-pages.md) | Downloading vs. a hidden tab vs. live mode, frames, code editors, pages behind a sign-in, script-only pages, PDFs, feeds and JSON |
 | [Formatting changes](formatting.md) | Alerting when text turns bold, becomes a heading, changes color or a link changes address |
 | [HTML and visual changes](html-and-visual-changes.md) | Alerting when elements or attributes change (a button gets disabled, an image is swapped), or when a screenshot of the page looks different |
 | [Site access](site-access.md) | Seeing which sites the extension can read and which watches use each one, revoking access, and allowing a site before you watch it |
 | [Reviewing changes](reviewing-changes.md) | The inbox, the comparison views, the number chart, highlighting, CSV export, backups and keyboard shortcuts |
 | [Examples and use cases](examples.md) | Step-by-step recipes: price drops, restocks, job boards, status pages, release notes, policies, APIs and more |
-| [Troubleshooting](troubleshooting.md) | What each error means and how to fix it |
+| [Troubleshooting](troubleshooting.md) | What each error means, how to fix it, and the diagnostics file to share when a watch misses something |
 
 ## Reference
 

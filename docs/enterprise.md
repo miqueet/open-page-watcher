@@ -20,6 +20,12 @@ managed Chrome browsers, and how to limit what it can do.
   turns on "render in tab" for a watch. When a download only gives a
   placeholder, the extension asks the user before switching that watch; it
   never switches by itself, and `disableRenderInTab` removes the option.
+- In a hidden tab, code editors (CodeMirror, Monaco, Ace) only draw the lines
+  on screen, so the extension reads their full text from the editor itself. That
+  small read-only function runs in the page's own context, because only the
+  page can see the editor's data; it is passed nothing but a size limit, and
+  what it returns is only ever kept as text. It never runs in the user's own
+  tabs. `disableEditorReading` turns it off.
 - Cookies are not sent with checks unless the watch has that turned on, either
   by the user or automatically when a page asks the user to sign in.
   `disableCookies` turns both off.
@@ -54,6 +60,7 @@ set by the organization.
 | `disableRenderInTab` | boolean | Pages are only downloaded and parsed; their scripts never run. |
 | `disableLiveMode` | boolean | The extension never observes open tabs. |
 | `disableScreenshots` | boolean | Watches can't compare screenshots, so the extension never asks for access to all sites (screenshots need it). |
+| `disableEditorReading` | boolean | Code editors are read only as far as they are drawn on screen (usually the first screenful), so the extension never runs anything in a page's own context. |
 | `minIntervalMinutes` | integer | Checks run at most this often. Shorter intervals are raised to it. |
 | `maxWatches` | integer | Users can't add more watches than this. |
 

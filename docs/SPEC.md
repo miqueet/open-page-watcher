@@ -135,6 +135,15 @@ These run on the device but were left out as security trade-offs:
    with `fetch` and parsed with `DOMParser` in an offscreen document. Parsed
    documents do not run scripts or load subresources. Text is shown with
    `textContent` only.
+   In a hidden tab, code editors (CodeMirror, Monaco, Ace) keep their text in
+   their own data, which only page scripts can reach, so `readEditors`
+   (`src/lib/editors.js`) runs in the page's world (`world: 'MAIN'`) to read
+   it. It takes nothing but a size limit, calls only the editors' read
+   methods, and its result is treated as untrusted text (capped, never run,
+   only stored and compared). The extractor itself still runs in the
+   extension's isolated world. It never runs in live mode, never in frames the
+   user hasn't allowed, and organization policy can turn it off
+   (`disableEditorReading`).
 6. **Snapshots are inert.** The visual view shows a captured snapshot that has
    been stripped of scripts, event handlers, forms, frames, media, styles and
    every attribute except a short safe list, inside an `<iframe sandbox="">`
@@ -215,6 +224,8 @@ These run on the device but were left out as security trade-offs:
   alert sounds.
 - `src/lib/extract.js`: self-contained extraction function used both in the
   offscreen document and inside a rendered tab.
+- `src/lib/editors.js`: reads code editors' full text in hidden tabs.
+- `src/lib/diagnostics.js`: the per-watch diagnostics file (redacted by default).
 - `src/lib/pdf.js`: dependency-free PDF text extraction.
 - `src/lib/feeds.js`: RSS, Atom and sitemap reading.
 - `src/lib/diff.js`: Myers diff (lines, then words).

@@ -38,7 +38,8 @@ waits a few seconds, reads the page, and closes the window.
   after the page itself has loaded.
 - **Include content inside frames on the page:** also read embedded frames
   (only from sites you allowed). Useful for pages that embed a widget or
-  report from another address.
+  report from another address. A frame from another site needs its own
+  access: add a watch for that site, or allow it on the Site access page.
 - The hidden tab uses your normal Chrome profile, so you're **signed in** as
   you would be in a normal tab.
 
@@ -51,6 +52,43 @@ would). Your organization can turn this mode off.
 **Example:** an internal dashboard at `https://grafana.intranet.example/d/abc`
 shows "Loading…" when downloaded. Switch to a hidden tab with a 5-second wait
 and select the panel's value.
+
+### Code editors (config files, scripts, queries)
+
+Admin consoles often show a file in a code editor: a load balancer config, a
+YAML manifest, a SQL query. These editors (CodeMirror, Monaco, Ace) only draw
+the lines that fit on screen, so the page's text holds just the first
+screenful, with its line numbers and without its indentation.
+
+In a hidden tab, the extension reads the editor's **whole text** from the
+editor itself instead, and keeps it exactly as written: indentation, blank
+lines and all. The line numbers are left out. The rest of the page is read as
+usual. To watch only the file, pick the editor (or its text area) with the
+picker; the whole editor is watched, not just the line you clicked.
+
+- It works for editors in frames too, when **Include content inside frames on
+  the page** is on.
+- The first check that reads an editor in full is a new starting point, not a
+  change, so you aren't alerted about lines that were simply never read before.
+- If the full text can't be reached (the
+  [diagnostics file](troubleshooting.md#download-diagnostics) says
+  `"source": "screen"`), only the drawn lines are saved, still with their
+  indentation.
+- When the page is downloaded instead, its scripts never run, so there is no
+  editor to read: use a hidden tab.
+- It never happens in live mode, where the editor may hold what you typed.
+
+How it works: only the page's own scripts can see an editor's text, so a small
+read-only function runs in the page to fetch it. It is passed nothing but a
+size limit, and what it returns is only ever saved and compared as text. Your
+organization can turn this off (`disableEditorReading`); then editors are read
+as far as they are drawn.
+
+**Example:** a load balancer's web console shows its config at
+`https://lb.intranet.example/advanced/configuration` in an editor. Add a watch
+for that page, choose **Open it in a hidden window**, and pick the editor. Each
+version is the whole config file, so a new `backend` block or a changed
+`timeout` shows up as a line-by-line change.
 
 ## Live mode
 

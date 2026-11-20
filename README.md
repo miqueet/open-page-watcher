@@ -209,7 +209,7 @@ examples you can copy into the watch editor:
 | `alarms` | Run checks on a schedule |
 | `notifications` | Show change alerts |
 | `offscreen` | Parse pages without running their scripts, and play the alert sound |
-| `activeTab`, `scripting` | Inject the element picker into the tab you're on when you ask for it, read rendered pages, and highlight changes on a page you open from the inbox |
+| `activeTab`, `scripting` | Inject the element picker into the tab you're on when you ask for it, read rendered pages (including the full text of code editors on them), and highlight changes on a page you open from the inbox |
 | `contextMenus` | The "Watch this page" right-click items |
 | `tts` | Read changes aloud, if you turn that on for a watch (on-device voices only) |
 | Site access (optional, per site) | Requested only for sites you watch (or allow yourself on the Site access page), and released when you stop or revoke it |

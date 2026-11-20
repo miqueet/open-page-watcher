@@ -329,6 +329,10 @@ async function renderDetail() {
         },
       }, 'Download CSV'),
       el('button', {
+        title: 'Check the page now without saving anything, and download a file that explains what the extension sees there, to share when a watch misses something',
+        onclick: (e) => downloadDiagnostics(watch, e.currentTarget),
+      }, 'Diagnostics'),
+      el('button', {
         class: 'danger',
         onclick: async () => {
           if (!confirm(`Delete "${watch.name}" and its history?`)) return;
@@ -1576,6 +1580,38 @@ function dialog(title, body, confirmLabel) {
     document.body.append(d);
     d.showModal();
   });
+}
+
+// Asks what to include, runs a test check and saves the diagnostics file.
+async function downloadDiagnostics(watch, button) {
+  const content = el('input', { type: 'checkbox', id: 'diag-content' });
+  const addresses = el('input', { type: 'checkbox', id: 'diag-addresses' });
+  const ok = await dialog('Download diagnostics', [
+    el('p', { class: 'hint' }, 'Checks the page now, the way this watch does, without saving a version or alerting. '
+      + 'The file lists the extension version, this watch’s settings, how the page was loaded, the frames and code editors found, '
+      + 'what was captured (sizes and line counts), recent checks and errors. Cookies and anything typed into the page are never included.'),
+    el('label', { class: 'check' }, content, el('span', {}, 'Include the captured text',
+      el('div', { class: 'hint' }, 'Off: only its size, line counts and a fingerprint. Turn on only if the page holds nothing private.'))),
+    el('label', { class: 'check' }, addresses, el('span', {}, 'Include page addresses and the watch name',
+      el('div', { class: 'hint' }, 'Off: addresses become site-1, site-2… and paths are hidden.'))),
+  ], 'Download');
+  if (!ok) return;
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Checking…';
+  try {
+    const { report } = await call('diagnoseWatch', {
+      id: watch.id, includeContent: content.checked, includeAddresses: addresses.checked,
+    });
+    const day = new Date().toISOString().slice(0, 10);
+    download(report, `open-page-watcher-diagnostics-${day}.json`);
+    toast(report.testCheck.ok ? 'Diagnostics saved.' : `Diagnostics saved. The test check failed: ${report.testCheck.error}`);
+  } catch (err) {
+    toast(`Diagnostics failed: ${err.message}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
 }
 
 function saveFile(blob, name) {
