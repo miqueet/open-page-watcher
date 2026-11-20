@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  pixelDifference, changedCells, sameShape, describeShotChange, steadyCapture,
+  pixelDifference, changedCells, sameShape, describeShotChange, steadyCapture, captureCrop,
 } from '../src/lib/shots.js';
 
 function image(width, height, paint = () => [255, 255, 255]) {
@@ -53,4 +53,29 @@ test('a capture is only kept when nothing moved while it was taken', () => {
   assert.equal(steadyCapture(area, { ...area, vw: 500 }, { width: 800, height: 600 }), false);
   assert.equal(steadyCapture(area, { ...area, y: 60 }, { width: 800, height: 600 }), false);
   assert.equal(steadyCapture(area, undefined, { width: 800, height: 600 }), false);
+  assert.equal(steadyCapture({ ...area, dpr: 1 }, { ...area, dpr: 2 }, { width: 800, height: 600 }), false);
+});
+
+test('the watched area is found in the capture at the right scale', () => {
+  const area = { vw: 1280, vh: 720, dpr: 1, x: 0, y: 0, w: 308, h: 128 };
+  // The whole viewport, at the device pixel ratio.
+  assert.deepEqual(captureCrop(area, { width: 1280, height: 720 }), { sx: 0, sy: 0, sw: 308, sh: 128 });
+  assert.deepEqual(captureCrop({ ...area, dpr: 2, x: 10 }, { width: 2560, height: 1440 }), { sx: 20, sy: 0, sw: 616, sh: 256 });
+  // A pixel or two off the expected size (fractional ratios round).
+  assert.deepEqual(captureCrop({ ...area, dpr: 1.25 }, { width: 1600, height: 901 }), { sx: 0, sy: 0, sw: 385, sh: 160 });
+  // The whole viewport, scaled down by Chrome: same shape, so same scale both ways.
+  assert.deepEqual(captureCrop({ ...area, dpr: 2 }, { width: 1280, height: 720 }), { sx: 0, sy: 0, sw: 308, sh: 128 });
+});
+
+test('a capture cut off at the window is not stretched to fit the viewport', () => {
+  // Seen on GitHub's runners: an 800x600 hidden window with a 1280x720
+  // viewport is sometimes captured at 800x600, the viewport's top-left part.
+  // Stretching it gave the same page a 1.6x zoomed crop ("Looks different: 11%").
+  const area = { vw: 1280, vh: 720, dpr: 1, x: 0, y: 0, w: 308, h: 128 };
+  assert.deepEqual(captureCrop(area, { width: 800, height: 600 }), { sx: 0, sy: 0, sw: 308, sh: 128 });
+  // When the watched part isn't all inside the cut-off picture, it can't be used.
+  assert.equal(captureCrop({ ...area, x: 600 }, { width: 800, height: 600 }), null);
+  assert.equal(captureCrop({ ...area, y: 500 }, { width: 800, height: 600 }), null);
+  assert.equal(captureCrop(area, { width: 0, height: 600 }), null);
+  assert.equal(captureCrop(undefined, { width: 800, height: 600 }), null);
 });
