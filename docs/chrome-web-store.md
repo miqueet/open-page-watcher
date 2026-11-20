@@ -167,7 +167,7 @@ The dashboard shows one box per permission. Paste the matching text.
 | `notifications` | Shows a desktop notification when a watched page changes, or when a watch keeps failing. |
 | `offscreen` | Parses downloaded pages with DOMParser in an offscreen document without running their scripts, and plays the optional alert sound. |
 | `activeTab` | Injects the element picker into the current tab only when the user starts it from the popup, the right-click menu or the keyboard shortcut. |
-| `scripting` | Runs the element picker in the current tab, reads the watched parts of a page the extension opened in a hidden window for watches set to "open in a hidden window", and highlights what changed when the user opens a watched page from the extension. |
+| `scripting` | Runs the element picker in the current tab, reads the watched parts of a page the extension opened in a hidden window for watches set to "open in a hidden window" (including the full text of code editors on it), and highlights what changed when the user opens a watched page from the extension. |
 | `contextMenus` | Adds "Watch this page for changes" and "Watch part of this page…" to the right-click menu. |
 | `tts` | Reads a change aloud when the user turns that on for a watch. Only voices installed on the device are used, so the text is never sent to a speech service. |
 

@@ -31,6 +31,20 @@ let feedItems = ['Hello world', 'Second post'];
 let styled = '<p>Sale ends <span>Friday</span></p>';
 let buyButton = '<button class="buy" data-ts="1">Add to cart</button>';
 let shotColor = 'green';
+// A made-up config for the code editor pages: indentation and blank lines
+// matter, and only its first lines are drawn, like real editors do.
+const editorConfig = ['global', '  daemon', '  maxconn 2000', '', 'defaults web', '  mode http', '',
+  ...Array.from({ length: 30 }, (_, i) => [`backend be-${i + 1}`, `  server s${i + 1} 192.0.2.${i + 1}:443 check`, '']).flat(),
+  '# end'].join('\n');
+let editorExtra = '';
+const shownLines = (n) => editorConfig.split('\n').slice(0, n);
+// Like CodeMirror 6: line numbers first, then the drawn lines; the whole text
+// is only in the editor's data, which page scripts keep on the element.
+const fakeCodeMirror = () => `<div class="cm-editor"><div class="cm-scroller">
+  <div class="cm-gutters">${shownLines(5).map((_, i) => `<div class="cm-gutterElement">${i + 1}</div>`).join('')}</div>
+  <div class="cm-content" contenteditable="true">${shownLines(5).map((l) => `<div class="cm-line">${l || '<br>'}</div>`).join('')}</div></div></div>
+  <script>const full = ${JSON.stringify(editorConfig)} + ${JSON.stringify(editorExtra)};
+    document.querySelector('.cm-content').cmTile = { root: { view: { state: { doc: { toString: () => full } } } } };</script>`;
 const server = http.createServer((req, res) => {
   if (req.url === '/product') {
     cookieSeen = req.headers.cookie || '';
@@ -104,6 +118,22 @@ const server = http.createServer((req, res) => {
     res.setHeader('content-type', 'text/html');
     return res.end(`<!doctype html><title>Look</title><style>body{margin:0}#box{width:300px;height:120px;background:${shotColor}}</style>
       <div id="box">Same text</div>`);
+  }
+  if (req.url === '/editor') {
+    res.setHeader('content-type', 'text/html');
+    return res.end(`<!doctype html><title>Editor</title><h1>Config   editor</h1>${fakeCodeMirror()}<p>  Footer  </p>`);
+  }
+  if (req.url === '/editor-framed') {
+    res.setHeader('content-type', 'text/html');
+    return res.end('<!doctype html><title>Framed</title><p>Outside</p><iframe src="/editor"></iframe>');
+  }
+  if (req.url === '/editor-screen') {
+    // Like Monaco: lines placed by their top offset, not in order, indented
+    // with no-break spaces, and no editor data the extension can reach.
+    const lines = shownLines(6).map((l, i) => [i, l]).reverse();
+    res.setHeader('content-type', 'text/html');
+    return res.end(`<!doctype html><title>Screen</title><div class="monaco-editor"><div class="margin">${lines.map(([i]) => `<div>${i + 1}</div>`).join('')}</div>
+      <div class="view-lines">${lines.map(([i, l]) => `<div class="view-line" style="top:${i * 19}px"><span>${l.replace(/ /g, '&nbsp;')}</span></div>`).join('')}</div></div>`);
   }
   if (req.url === '/broken') {
     res.statusCode = 500;
@@ -1162,6 +1192,60 @@ try {
     assert.match(w.lastError, /None of the selected elements/);
     assert.equal((await send({ type: 'changeLoading', id, how: 'sideways' })).ok, false);
     await send({ type: 'deleteWatch', id });
+  });
+
+  await step('code editors are read in full, with indentation and blank lines', async () => {
+    const res = await send({ type: 'createWatch', watch: { url: `${base}/editor`, mode: 'tab', renderDelaySeconds: 0 } });
+    const h = await waitFor(async () => (await history(res.id))[0], 30000);
+    assert.equal(h.text, `Config editor\n${editorConfig}\nFooter`);
+    assert.equal(h.reader, 2);
+    // Picking the editor's text area watches the whole editor too.
+    const picked = await send({ type: 'createWatch', watch: { url: `${base}/editor`, mode: 'tab', renderDelaySeconds: 0, selectors: [{ type: 'css', expr: '.cm-content' }] } });
+    assert.equal((await waitFor(async () => (await history(picked.id))[0], 30000)).text, editorConfig);
+    // Downloaded without scripts, only the drawn lines exist, still indented.
+    const fetched = await send({ type: 'createWatch', watch: { url: `${base}/editor` } });
+    assert.equal((await waitFor(async () => (await history(fetched.id))[0])).text, `Config editor\n${shownLines(5).join('\n')}\nFooter`);
+    // Editors in frames are read when the watch includes frames.
+    const framed = await send({ type: 'createWatch', watch: { url: `${base}/editor-framed`, mode: 'tab', renderDelaySeconds: 0, includeFrames: true } });
+    assert.equal((await waitFor(async () => (await history(framed.id))[0], 30000)).text, `Outside\nConfig editor\n${editorConfig}\nFooter`);
+    const screen = await send({ type: 'createWatch', watch: { url: `${base}/editor-screen`, mode: 'tab', renderDelaySeconds: 0 } });
+    const s = await waitFor(async () => (await history(screen.id))[0], 30000);
+    assert.equal(s.text, shownLines(6).join('\n'));
+    assert.equal(s.reader, undefined);
+    for (const id of [picked.id, fetched.id, framed.id, screen.id]) await send({ type: 'deleteWatch', id });
+
+    // Diagnostics: a test check that saves nothing, with no text or addresses
+    // unless asked for.
+    editorExtra = '\nbackend be-new';
+    const { report } = await send({ type: 'diagnoseWatch', id: res.id });
+    const json = JSON.stringify(report);
+    assert.equal(report.format, 'open-page-watcher-diagnostics');
+    assert.equal(report.contentIncluded, false);
+    assert.doesNotMatch(json, /127\.0\.0\.1|192\.0\.2|daemon|Config editor/);
+    assert.match(report.watch.url, /^http:\/\/site-1:\d+\/\(path hidden\)$/);
+    assert.equal(report.watch.name, '(hidden)');
+    assert.equal(report.testCheck.ok, true, report.testCheck.error);
+    assert.equal(report.testCheck.captured.sameAsLatestVersion, false);
+    assert.equal(report.testCheck.captured.lines, editorConfig.split('\n').length + 3);
+    assert.deepEqual(report.testCheck.frames[0].editors, [{ kind: 'codemirror6', source: 'model', lines: editorConfig.split('\n').length + 1, chars: editorConfig.length + editorExtra.length }]);
+    assert.equal(report.savedVersions.count, 1);
+    assert.equal((await history(res.id)).length, 1, 'diagnostics saved nothing');
+    const full = (await send({ type: 'diagnoseWatch', id: res.id, includeContent: true, includeAddresses: true })).report;
+    assert.match(full.testCheck.captured.text, /backend be-new\nFooter$/);
+    assert.equal(full.watch.url, `${base}/editor`);
+    editorExtra = '';
+
+    // The inbox offers it per watch.
+    await page.evaluate((id) => { location.hash = `#/w/${id}`; }, res.id);
+    await page.getByRole('button', { name: 'Diagnostics' }).click();
+    await page.getByRole('button', { name: 'Download', exact: true }).waitFor();
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download', exact: true }).click();
+    const file = await download;
+    assert.match(file.suggestedFilename(), /^open-page-watcher-diagnostics-\d{4}-\d{2}-\d{2}\.json$/);
+    const saved = JSON.parse(fs.readFileSync(await file.path(), 'utf8'));
+    assert.equal(saved.contentIncluded, false);
+    await send({ type: 'deleteWatch', id: res.id });
   });
 
   await step('popup renders', async () => {

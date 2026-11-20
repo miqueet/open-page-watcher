@@ -12,6 +12,8 @@
 //   captureFormat: boolean,    // also return the text annotated with its formatting
 //   userTab: boolean,          // the user's own tab (live mode): skip anything they may have typed
 //   expect: { url } | { origin },  // the main frame must still show this page or site
+//   editors: [{ text?, source }],  // full text of the page's code editors, read
+//                                  // by readEditors (src/lib/editors.js) in the page's world
 // }
 // Returns { ok: true, text, matched, html?, format? } or { ok: false, error, pageText? },
 // plus signInForm (the page has a password or username field; no values are
@@ -21,7 +23,14 @@
 // frameUrl is the document's address, so frames from sites the user didn't
 // allow can be left out.
 // pageText is the start of the whole page's text when the selected parts
-// weren't found.
+// weren't found. editors describes the code editors that were read (kind,
+// where their text came from, lines, chars) and childFrames the page's
+// frames (address only), both for the diagnostics export.
+//
+// Code editors (CodeMirror, Monaco, Ace) only draw the lines on screen, so
+// their text comes from spec.editors when it could be read, else from the
+// lines shown. Either way it keeps its indentation and blank lines, unlike
+// the rest of the page, whose lines are trimmed.
 export function extractText(spec, doc = document) {
   const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'IFRAME', 'OBJECT', 'HEAD']);
   const BLOCK = new Set([
@@ -33,6 +42,62 @@ export function extractText(spec, doc = document) {
 
   const URL_ATTRS = new Set(['href', 'src', 'action', 'poster', 'cite', 'data']);
   let excluded = new Set();
+
+  // Code editors. Must match the list in readEditors.
+  const EDITOR = '.cm-editor, .CodeMirror, .monaco-editor, .ace_editor';
+  const EDITOR_LINES = {
+    codemirror6: '.cm-content .cm-line',
+    codemirror5: '.CodeMirror-code pre.CodeMirror-line',
+    monaco: '.view-lines .view-line',
+    ace: '.ace_text-layer .ace_line',
+  };
+  let editorRoots = null;
+  const editorsRead = [];
+  const editorsSeen = new Set();
+  const editorKind = (n) => {
+    const c = n.classList;
+    if (c.contains('cm-editor')) return 'codemirror6';
+    if (c.contains('CodeMirror')) return 'codemirror5';
+    if (c.contains('monaco-editor')) return 'monaco';
+    return 'ace';
+  };
+  const outermostEditor = (n) => !(n.parentElement && n.parentElement.closest(EDITOR));
+  function isEditorRoot(node) {
+    return node.nodeType === 1 && typeof node.matches === 'function' && node.matches(EDITOR) && outermostEditor(node);
+  }
+  // The editor a selected element belongs to, when the selection covers the
+  // editor's lines (not just one of them).
+  function editorAround(node) {
+    if (node.nodeType !== 1 || typeof node.closest !== 'function' || isEditorRoot(node)) return null;
+    let host = node.closest(EDITOR);
+    while (host && !outermostEditor(host)) host = host.parentElement.closest(EDITOR);
+    if (!host) return null;
+    const lines = EDITOR_LINES[editorKind(host)];
+    return node.matches(lines) || !node.querySelector(lines) ? null : host;
+  }
+  // The editor's text, keeping indentation and blank lines.
+  function editorText(node) {
+    if (!editorRoots) editorRoots = Array.from(doc.querySelectorAll(EDITOR)).filter(outermostEditor);
+    const kind = editorKind(node);
+    const given = spec && Array.isArray(spec.editors) ? spec.editors[editorRoots.indexOf(node)] : null;
+    let text;
+    let source;
+    if (given && typeof given.text === 'string') {
+      text = given.text;
+      source = given.source || 'model';
+    } else {
+      const lines = Array.from(node.querySelectorAll(EDITOR_LINES[kind]));
+      if (kind === 'monaco') lines.sort((a, b) => (parseFloat(a.style.top) || 0) - (parseFloat(b.style.top) || 0));
+      text = lines.map((l) => String(l.textContent || '').replace(/\u200b/g, '')).join('\n');
+      source = 'screen';
+    }
+    const kept = text.replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ').split('\n').map((l) => l.replace(/\s+$/, ''));
+    while (kept.length && !kept[0]) kept.shift();
+    while (kept.length && !kept[kept.length - 1]) kept.pop();
+    if (!editorsSeen.has(node) && editorsRead.length < 50) editorsRead.push({ kind, source, lines: kept.length, chars: kept.join('\n').length });
+    editorsSeen.add(node);
+    return kept;
+  }
 
   function find(sel) {
     if (sel.type === 'xpath') {
@@ -213,6 +278,12 @@ export function extractText(spec, doc = document) {
       const tag = node.nodeType === 1 ? node.tagName.toUpperCase() : '';
       if (SKIP.has(tag)) return;
       if (node.nodeType === 1 && isSecret(node)) return;
+      // In the user's own tab an editor may hold what they typed: it's read
+      // like the rest of the page there (editable ones not at all).
+      if (!userTab && isEditorRoot(node)) {
+        out.push({ lines: editorText(node) });
+        return;
+      }
       if (tag === 'INPUT') {
         out.push(' ' + (node.getAttribute('value') ?? '') + ' ');
         return;
@@ -230,12 +301,25 @@ export function extractText(spec, doc = document) {
       if (tag === 'TD' || tag === 'TH') out.push('\t');
       if (block) out.push('\n');
     })(root);
-    return out
-      .join('')
-      .split('\n')
-      .map((line) => line.replace(/[ \t ]+/g, ' ').trim())
-      .filter(Boolean)
-      .join('\n');
+    const lines = [];
+    let run = [];
+    const flush = () => {
+      for (const line of run.join('').split('\n')) {
+        const tidy = line.replace(/[ \t ]+/g, ' ').trim();
+        if (tidy) lines.push(tidy);
+      }
+      run = [];
+    };
+    for (const part of out) {
+      if (typeof part === 'string') {
+        run.push(part);
+      } else {
+        flush();
+        lines.push(...part.lines);
+      }
+    }
+    flush();
+    return lines.join('\n');
   }
 
   let signInForm = false;
@@ -258,7 +342,17 @@ export function extractText(spec, doc = document) {
   } catch {
     // no location (a parsed document)
   }
-  return Object.assign(read(), { signInForm, title, scripts, emptyRoot, frameUrl });
+  let childFrames = [];
+  try {
+    childFrames = Array.from(doc.querySelectorAll('iframe, frame')).slice(0, 30)
+      .map((f) => (f.hasAttribute('srcdoc') ? 'about:srcdoc' : attrOf(f, 'src') || 'about:blank'));
+  } catch {
+    // not an HTML document
+  }
+  const result = read();
+  return Object.assign(result, {
+    signInForm, title, scripts, emptyRoot, frameUrl, childFrames, editors: editorsRead,
+  });
 
   function read() {
     try {
@@ -291,7 +385,8 @@ export function extractText(spec, doc = document) {
       for (const sel of selectors) {
         const nodes = find(sel).filter((n) => !excluded.has(n));
         matched += nodes.length;
-        for (const node of nodes) {
+        for (const picked of nodes) {
+          const node = (!userTab && !sel.attr && editorAround(picked)) || picked;
           if (html && node.nodeType === 1) htmlOf(node, html);
           const element = node.nodeType === 1 || node.nodeType === 9;
           const part = sel.attr ? attrOf(node, sel.attr)

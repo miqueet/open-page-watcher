@@ -44,6 +44,7 @@ export function normalizePolicy(raw = {}) {
     disableRenderInTab: raw.disableRenderInTab === true,
     disableLiveMode: raw.disableLiveMode === true,
     disableScreenshots: raw.disableScreenshots === true,
+    disableEditorReading: raw.disableEditorReading === true,
     minIntervalMinutes: int(raw.minIntervalMinutes),
     maxWatches: int(raw.maxWatches),
   };
@@ -51,7 +52,7 @@ export function normalizePolicy(raw = {}) {
 
 export function isManaged(policy) {
   return Boolean(policy.allowedSites || policy.blockedSites.length || policy.disableCookies
-    || policy.disableRenderInTab || policy.disableLiveMode || policy.disableScreenshots || policy.minIntervalMinutes || policy.maxWatches);
+    || policy.disableRenderInTab || policy.disableLiveMode || policy.disableScreenshots || policy.disableEditorReading || policy.minIntervalMinutes || policy.maxWatches);
 }
 
 function covers(entry, host) {

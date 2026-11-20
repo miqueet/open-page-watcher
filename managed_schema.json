@@ -37,6 +37,11 @@
       "description": "Watches can't compare screenshots, so the extension never asks for access to all sites.",
       "type": "boolean"
     },
+    "disableEditorReading": {
+      "title": "Disable reading code editors in full",
+      "description": "Code editors on pages read in a hidden tab are read only as far as they are drawn on screen, so the extension never runs in the page's own context.",
+      "type": "boolean"
+    },
     "minIntervalMinutes": {
       "title": "Minimum check interval (minutes)",
       "type": "integer"

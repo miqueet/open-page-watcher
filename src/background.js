@@ -1,4 +1,6 @@
 import { extractText } from './lib/extract.js';
+import { readEditors } from './lib/editors.js';
+import { buildDiagnostics } from './lib/diagnostics.js';
 import { formatChanged, summarizeFormat } from './lib/formatting.js';
 import { markupChanged, summarizeMarkup } from './lib/markup.js';
 import {
@@ -18,7 +20,7 @@ import {
   sanitizeWatch, exportableWatch, postProcess, isDue, nextCheckTime, originPattern, sameDocument, comparisonKey, isHttpUrl,
 } from './lib/watch.js';
 import {
-  getWatches, getWatch, updateWatches, getHistory, appendHistory, deleteHistory, appendLog,
+  getWatches, getWatch, updateWatches, getHistory, appendHistory, deleteHistory, appendLog, getLog,
   getSettings, sanitizeSettings, serialize,
 } from './lib/storage.js';
 
@@ -31,6 +33,9 @@ const MAX_TEXT_CHARS = 2_000_000; // per version, after extraction
 const MAX_HTML_CHARS = 300 * 1024; // snapshot kept for the visual view
 const MAX_CONCURRENT = 3;
 const LIVE_MIN_GAP_MS = 10_000;
+const EDITOR_READ_TIMEOUT_MS = 10_000;
+// Saved with versions whose code editors were read in full (see record).
+const READER_EDITORS = 2;
 const OFFSCREEN_URL = 'src/offscreen.html';
 const INBOX_URL = chrome.runtime.getURL('src/ui/inbox.html');
 const EXTENSION_ORIGIN = chrome.runtime.getURL('');
@@ -190,6 +195,49 @@ async function checkWatch(id, { via = 'schedule', tabId, scheduled = false } = {
   }
 }
 
+// Runs a check the way the watch's schedule would, without saving anything
+// or alerting, and returns the diagnostics file (src/lib/diagnostics.js).
+async function diagnoseWatch(id, { includeContent = false, includeAddresses = false } = {}) {
+  const stored = await getWatch(id);
+  if (!stored) throw new Error('Watch not found');
+  const policy = await getPolicy();
+  const watch = applyPolicy(policy, stored);
+  const started = Date.now();
+  const run = { ok: false, error: '' };
+  try {
+    checkSiteAllowed(policy, watch.url);
+    run.siteAccess = await hasSiteAccess(watch.url);
+    if (!run.siteAccess) throw new Error('Access to this site has not been granted. Open the watch and click Allow.');
+    const result = watch.mode === 'tab'
+      ? await renderAndExtract(watch, { trace: run })
+      : await fetchAndExtract(watch, policy, { trace: run });
+    run.text = postProcess(result.text, watch);
+    if (watch.regexFilter) run.beforeRegexFilterChars = result.text.length;
+    if (result.html) run.htmlChars = result.html.length;
+    if (result.shotError) run.screenshotError = result.shotError;
+    if (result.kind) run.parsedAs = result.kind;
+    run.ok = true;
+  } catch (e) {
+    run.error = e?.message || String(e);
+    if (e?.signIn) run.signInPage = true;
+    if (e?.redirectBlocked) run.redirectBlocked = true;
+    if (e?.scriptsNeeded) run.scriptsNeeded = e.scriptsNeeded;
+  }
+  run.ms = Date.now() - started;
+  const [history, log] = await Promise.all([getHistory(id), getLog(id)]);
+  return buildDiagnostics({
+    version: chrome.runtime.getManifest().version,
+    userAgent: navigator.userAgent,
+    policy,
+    watch: stored,
+    history,
+    log,
+    run,
+    includeContent: includeContent === true,
+    includeAddresses: includeAddresses === true,
+  });
+}
+
 function signInMessage(watch, policy, { redirectBlocked = false } = {}) {
   // The sign-in page itself wasn't read: the page sent the check on to
   // another site (usually its single sign-on page).
@@ -260,7 +308,10 @@ async function record(watch, result, error, {
   const changed = textChanged || formatOnly || markupOnly || Boolean(shotOnly);
   // The way the page is loaded just changed: this version is the new starting
   // point, not a change to alert about.
-  const rebaseline = watch.rebaseline === true && Boolean(previous) && changed;
+  // Code editors read in full for the first time give a new starting point
+  // too: before, only their first screenful was saved.
+  const editorsReadInFull = result.reader === READER_EDITORS && Boolean(previous) && previous.reader !== READER_EDITORS;
+  const rebaseline = (watch.rebaseline === true || editorsReadInFull) && Boolean(previous) && changed;
   if (result.shotError) logEntry.note = `No screenshot: ${result.shotError}`;
   let alert = false;
   if (changed) {
@@ -268,6 +319,7 @@ async function record(watch, result, error, {
     if (result.html) entry.html = result.html;
     if (typeof result.format === 'string') entry.format = result.format;
     if (result.shot) entry.shot = result.shot;
+    if (result.reader) entry.reader = result.reader;
     await appendHistory(id, entry, watch.historyLimit);
     if (previous && !rebaseline) {
       logEntry.changed = true;
@@ -278,7 +330,7 @@ async function record(watch, result, error, {
     }
   } else if (previous.text === result.text && ((result.html && !previous.html)
     || (typeof result.format === 'string' && typeof previous.format !== 'string')
-    || (result.shot && !previous.shot))) {
+    || (result.shot && !previous.shot) || (result.reader && previous.reader !== result.reader))) {
     // Backfill the HTML of the current version so the visual view works, and
     // its formatting and screenshot so the next check has something to
     // compare with.
@@ -290,6 +342,7 @@ async function record(watch, result, error, {
         if (result.html && !last.html) last.html = result.html;
         if (typeof result.format === 'string' && typeof last.format !== 'string') last.format = result.format;
         if (result.shot && !last.shot) last.shot = result.shot;
+        if (result.reader) last.reader = result.reader;
         await chrome.storage.local.set({ [key]: h });
       }
     });
@@ -304,6 +357,7 @@ async function record(watch, result, error, {
   logEntry.alerted = alert;
   if (alert && watch.pauseAfterAlert) logEntry.note = 'Paused after this alert (“Pause after the first alert” is on)';
   if (cookiesTurnedOn) logEntry.note = 'Turned on “Send my cookies” because the page asked you to sign in';
+  else if (rebaseline && editorsReadInFull && watch.rebaseline !== true) logEntry.note = 'New starting point: the code editors on this page are now read in full';
   else if (rebaseline) logEntry.note = 'New starting point after changing how the page is loaded';
   await updateWatches((all) => {
     const w = all[id];
@@ -333,7 +387,8 @@ async function record(watch, result, error, {
   await broadcast({ type: 'changed', id });
 }
 
-async function fetchAndExtract(watch, policy, { scheduled = false } = {}) {
+async function fetchAndExtract(watch, policy, { scheduled = false, trace = null } = {}) {
+  const fetchStarted = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   const options = {
@@ -361,11 +416,21 @@ async function fetchAndExtract(watch, policy, { scheduled = false } = {}) {
         throw blockedRedirectError();
       }
     }
+    if (trace) {
+      trace.fetch = {
+        cookies: options.credentials === 'include',
+        status: response.status,
+        redirected: response.redirected,
+        finalUrl: response.url || watch.url,
+        contentType: response.headers.get('content-type') || '',
+      };
+    }
     if (needsSignIn({ status: response.status, watchUrl: watch.url, finalUrl: response.url || watch.url })) throw signInError();
     if (!response.ok) throw new Error(`The site answered with HTTP ${response.status}`);
     if (response.redirected) await checkRedirect(watch, response.url, policy);
     const isPdf = /application\/pdf/i.test(response.headers.get('content-type') || '');
     bytes = await readLimited(response, isPdf ? MAX_PDF_BYTES : MAX_BYTES);
+    if (trace) Object.assign(trace.fetch, { bytes: bytes.length, ms: Date.now() - fetchStarted });
   } catch (e) {
     if (e.name === 'AbortError') throw new Error('The site took longer than 30 seconds to respond');
     throw e;
@@ -417,6 +482,19 @@ async function fetchAndExtract(watch, policy, { scheduled = false } = {}) {
     mime: /xml/i.test(contentType) && !/html/i.test(contentType) ? 'application/xml' : 'text/html',
     spec: extractSpec(watch, response.url || watch.url),
   });
+  if (trace && result) {
+    trace.frames = [{
+      frameId: 0,
+      url: response.url || watch.url,
+      ok: result.ok === true,
+      error: result.ok ? '' : String(result.error || ''),
+      matched: result.matched || 0,
+      chars: typeof result.text === 'string' ? result.text.length : 0,
+      childFrames: result.childFrames || [],
+      editors: result.editors || [],
+    }];
+    trace.parsedAs = result.kind || 'html';
+  }
   if (result && needsSignIn({
     watchUrl: watch.url, finalUrl: response.url || watch.url, signInForm: result.signInForm, title: result.title, found: result.ok,
   })) throw signInError();
@@ -488,7 +566,8 @@ async function readLimited(response, limit) {
 
 // Loads the page in a minimized window so its JavaScript can render, then
 // extracts text and closes the window.
-async function renderAndExtract(watch) {
+async function renderAndExtract(watch, { trace = null } = {}) {
+  const renderStarted = Date.now();
   const win = await chrome.windows.create({ url: watch.url, state: 'minimized', focused: false });
   const tabId = win.tabs[0].id;
   renderTabs.add(tabId);
@@ -500,7 +579,8 @@ async function renderAndExtract(watch) {
     if (!tab.url || new URL(tab.url).origin !== new URL(watch.url).origin) {
       throw new Error('The page redirected to a different site');
     }
-    const result = await extractInTab(tabId, watch, { expect: { origin: new URL(watch.url).origin } });
+    if (trace) trace.render = { loadMs: Date.now() - renderStarted, waitSeconds: watch.renderDelaySeconds, finalUrl: tab.url || '' };
+    const result = await extractInTab(tabId, watch, { expect: { origin: new URL(watch.url).origin }, trace });
     if (watch.watchScreenshot) {
       try {
         result.shot = await takeScreenshot(win.id, tabId, watch);
@@ -666,32 +746,92 @@ async function compareShots(before, after) {
 }
 
 // Runs the extractor in a tab (and, if the watch asks for it, in the tab's
-// frames that the extension has access to).
-async function extractInTab(tabId, watch, { userTab = false, expect = null } = {}) {
+// frames that the extension has access to). trace, when given, collects what
+// was found in each frame for the diagnostics export.
+async function extractInTab(tabId, watch, { userTab = false, expect = null, trace = null } = {}) {
   const tab = await chrome.tabs.get(tabId);
   if (userTab) {
     // The tab may have moved on since it reported a change.
     if (tab.incognito || !sameDocument(tab.url || '', watch.url)) throw new Error('The tab no longer shows this page');
     expect = { url: watch.url };
   }
-  const injections = await chrome.scripting.executeScript({
-    target: watch.includeFrames && !userTab ? { tabId, allFrames: true } : { tabId },
-    func: extractText,
-    args: [extractSpec(watch, tab.url, { userTab, expect })],
-  });
-  // While access to all sites is held for screenshots, Chrome runs the
-  // extractor in every frame; keep only frames from sites the user allowed.
-  for (const i of injections) {
-    if (i.frameId !== 0 && i.result && !(isHttpUrl(i.result.frameUrl) && (await hasSiteAccess(i.result.frameUrl)))) {
-      const { origins = [] } = await chrome.permissions.getAll();
-      if (origins.includes(ALL_SITES)) i.result = null;
+  const allFrames = Boolean(watch.includeFrames) && !userTab;
+  const target = allFrames ? { tabId, allFrames: true } : { tabId };
+  const { origins = [] } = await chrome.permissions.getAll();
+  // While access to all sites is held for screenshots, Chrome runs scripts in
+  // every frame; only frames from sites the user allowed are read.
+  const frameAllowed = async (frameId, url) => frameId === 0 || !origins.includes(ALL_SITES)
+    || (isHttpUrl(url) && (await hasSiteAccess(url)));
+  const spec = extractSpec(watch, tab.url, { userTab, expect });
+
+  // Code editors only draw the lines on screen; their whole text is read
+  // separately (never in the user's own tab, where it may be their typing).
+  const editorsByFrame = new Map();
+  const frameIds = [];
+  if (!userTab && !(await getPolicy()).disableEditorReading) {
+    const started = Date.now();
+    try {
+      const reads = await withTimeout(chrome.scripting.executeScript({
+        target, world: 'MAIN', func: readEditors, args: [{ maxChars: MAX_TEXT_CHARS }],
+      }), EDITOR_READ_TIMEOUT_MS, 'Reading the code editors took too long');
+      for (const r of reads) {
+        frameIds.push(r.frameId);
+        const editors = Array.isArray(r.result?.editors) ? r.result.editors.slice(0, 50) : [];
+        if (editors.length && (await frameAllowed(r.frameId, r.result.frameUrl))) {
+          editorsByFrame.set(r.frameId, editors.map((e) => ({
+            kind: String(e?.kind || ''),
+            source: typeof e?.text === 'string' ? String(e.source || 'model') : '',
+            text: typeof e?.text === 'string' ? e.text : undefined,
+            error: typeof e?.error === 'string' ? e.error.slice(0, 200) : undefined,
+          })));
+        }
+      }
+      if (trace) trace.editorRead = { ms: Date.now() - started };
+    } catch (e) {
+      if (trace) trace.editorRead = { ms: Date.now() - started, error: e?.message || String(e) };
     }
   }
+
+  let injections;
+  if (!editorsByFrame.size) {
+    injections = await chrome.scripting.executeScript({ target, func: extractText, args: [spec] });
+  } else {
+    // Frames with editors each get their own editors' text.
+    const plain = frameIds.filter((id) => !editorsByFrame.has(id));
+    const runs = [...editorsByFrame].map(([frameId, editors]) => chrome.scripting.executeScript({
+      target: { tabId, frameIds: [frameId] }, func: extractText, args: [{ ...spec, editors }],
+    }));
+    if (plain.length) runs.push(chrome.scripting.executeScript({ target: { tabId, frameIds: plain }, func: extractText, args: [spec] }));
+    injections = (await Promise.all(runs)).flat();
+  }
+  for (const i of injections) {
+    if (i.frameId !== 0 && i.result && !(await frameAllowed(i.frameId, i.result.frameUrl))) {
+      if (trace) (trace.skippedFrames ||= []).push(String(i.result.frameUrl || ''));
+      i.result = null;
+    }
+  }
+  injections.sort((a, b) => a.frameId - b.frameId);
+  if (trace) {
+    trace.frames = injections.filter((i) => i.result).map((i) => {
+      const r = i.result;
+      const editors = editorsByFrame.get(i.frameId) || [];
+      return {
+        frameId: i.frameId,
+        url: String(r.frameUrl || ''),
+        ok: r.ok === true,
+        error: r.ok ? '' : String(r.error || ''),
+        matched: r.matched || 0,
+        chars: typeof r.text === 'string' ? r.text.length : 0,
+        childFrames: Array.isArray(r.childFrames) ? r.childFrames : [],
+        editors: (Array.isArray(r.editors) ? r.editors : []).map((e, n) => ({
+          ...e, error: editors[n]?.error || undefined,
+        })),
+        editorsOnPage: editors.length,
+      };
+    });
+  }
   const main = injections.find((i) => i.frameId === 0)?.result;
-  const found = injections
-    .sort((a, b) => a.frameId - b.frameId)
-    .map((i) => i.result)
-    .filter((r) => r?.ok);
+  const found = injections.map((i) => i.result).filter((r) => r?.ok);
   if (main && needsSignIn({
     watchUrl: watch.url, finalUrl: tab.url || watch.url, signInForm: main.signInForm, title: main.title, found: found.length > 0,
   })) throw signInError();
@@ -702,7 +842,18 @@ async function extractInTab(tabId, watch, { userTab = false, expect = null } = {
     html: html.length <= MAX_HTML_CHARS ? html : '',
   };
   if (found.every((r) => typeof r.format === 'string')) result.format = found.map((r) => r.format).filter(Boolean).join('\n');
+  // Code editors whose whole text was read, so the first such version can be
+  // a new starting point instead of a change (see record).
+  if (found.some((r) => (r.editors || []).some((e) => e.source && e.source !== 'screen'))) result.reader = READER_EDITORS;
   return result;
+}
+
+function withTimeout(promise, ms, message) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 function waitForTabComplete(tabId) {
@@ -1277,6 +1428,10 @@ const uiHandlers = {
   async checkNow({ id }) {
     await checkWatch(id);
     return {};
+  },
+
+  async diagnoseWatch({ id, includeContent, includeAddresses }) {
+    return { report: await diagnoseWatch(id, { includeContent, includeAddresses }) };
   },
 
   async setRead({ id, read }) {
