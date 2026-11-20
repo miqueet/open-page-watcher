@@ -4,7 +4,7 @@ import { buildDiagnostics } from './lib/diagnostics.js';
 import { formatChanged, summarizeFormat } from './lib/formatting.js';
 import { markupChanged, summarizeMarkup } from './lib/markup.js';
 import {
-  pixelDifference, sameShape, describeShotChange, steadyCapture, COMPARE_WIDTH,
+  pixelDifference, sameShape, describeShotChange, steadyCapture, captureCrop, COMPARE_WIDTH,
 } from './lib/shots.js';
 import { conditionMet, changedText, numberFocus } from './lib/conditions.js';
 import { selectJson, jsonValuesText } from './lib/jsonpath.js';
@@ -21,8 +21,9 @@ import {
 } from './lib/watch.js';
 import {
   getWatches, getWatch, updateWatches, getHistory, appendHistory, deleteHistory, appendLog, getLog,
-  getSettings, sanitizeSettings, serialize,
+  getSettings, sanitizeSettings, serialize, getKeptSites, updateKeptSites,
 } from './lib/storage.js';
+import { isSitePattern } from './lib/sites.js';
 
 const TICK_ALARM = 'tick';
 const FETCH_TIMEOUT_MS = 30_000;
@@ -638,7 +639,7 @@ async function screenshotArea(selectors) {
     img.addEventListener('error', r, { once: true });
   }))));
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-  const view = { vw: innerWidth, vh: innerHeight };
+  const view = { vw: innerWidth, vh: innerHeight, dpr: devicePixelRatio };
   if (!rects.length) {
     scrollTo({ top: 0, left: 0, behavior: 'instant' });
     return { ...view, x: 0, y: 0, w: innerWidth, h: innerHeight };
@@ -676,31 +677,30 @@ async function takeScreenshot(windowId, tabId, watch) {
   const measure = async () => (await chrome.scripting.executeScript({ target: { tabId }, func: screenshotArea, args: [selectors] }))[0]?.result;
   let area;
   let shot;
+  let crop;
   // The hidden window can still be resizing, or the page moving, while the
-  // picture is taken. Measure before and after, and keep the picture only if
-  // nothing moved and it matches the measured viewport; otherwise the same
-  // page would look different from one check to the next.
+  // picture is taken, and Chrome sometimes draws only the part of the page
+  // that fits in the window. Measure before and after, and keep the picture
+  // only if nothing moved and it holds the whole watched area; otherwise the
+  // same page would look different from one check to the next.
   for (let attempt = 0; ; attempt++) {
     area = await measure();
     if (!area || !(area.w > 0) || !(area.h > 0)) throw new Error('The watched parts take up no space on the page');
     await sleep(300); // let the scroll paint
     shot = await createImageBitmap(await (await fetch(await captureWindow(windowId))).blob());
     const after = await measure();
-    if (steadyCapture(area, after, shot)) break;
+    const steady = steadyCapture(area, after, shot);
+    crop = steady ? captureCrop(area, shot) : null;
+    if (crop) break;
     shot.close();
     if (attempt >= 3) {
-      throw new Error(`The page kept moving or resizing while the screenshot was taken (${area.vw}×${area.vh} then ${after?.vw}×${after?.vh})`);
+      throw new Error(steady
+        ? `The screenshot didn't hold the whole watched area (${shot.width}×${shot.height} for a ${area.vw}×${area.vh} page)`
+        : `The page kept moving or resizing while the screenshot was taken (${area.vw}×${area.vh} then ${after?.vw}×${after?.vh})`);
     }
     await sleep(700);
   }
-  // Chrome doesn't always capture at the viewport's own resolution, nor with
-  // exactly its shape, so each direction is scaled on its own.
-  const scaleX = shot.width / area.vw;
-  const scaleY = shot.height / area.vh;
-  const sx = Math.round(area.x * scaleX);
-  const sy = Math.round(area.y * scaleY);
-  const sw = Math.max(1, Math.min(shot.width - sx, Math.round(area.w * scaleX)));
-  const sh = Math.max(1, Math.min(shot.height - sy, Math.round(area.h * scaleY)));
+  const { sx, sy, sw, sh } = crop;
   // Saved at the area's size in CSS pixels, whatever resolution Chrome
   // captured at (it varies, e.g. for minimized windows), so two checks of the
   // same page always give pictures of the same size.
@@ -1280,17 +1280,36 @@ async function hasSiteAccess(url) {
   const { origins = [] } = await chrome.permissions.getAll();
   if (!origins.includes(ALL_SITES)) return chrome.permissions.contains({ origins: [pattern] });
   if (origins.includes(pattern)) return true;
+  if ((await getKeptSites()).includes(pattern)) return true;
   const chosen = [...Object.values(await getWatches()), ...Object.values(await pickerSessions())];
   return chosen.some((w) => isHttpUrl(w.url) && originPattern(w.url) === pattern);
 }
 
+// Sites the user allowed on the Site access page and the organization still
+// allows. Their access is kept even while no watch uses them.
+async function keptSites() {
+  const policy = await getPolicy();
+  return (await getKeptSites()).filter((p) => {
+    try {
+      checkSiteAllowed(policy, p.replace(/\*$/, ''));
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 // Releases site access that no remaining watch needs.
 // Removes every optional site permission no watch (or open picker) uses, e.g.
-// access granted for a watch that then couldn't be saved.
+// access granted for a watch that then couldn't be saved. Sites the user
+// allowed on the Site access page stay, unless the organization now blocks them.
 async function releaseUnusedAccess() {
   const { origins = [] } = await chrome.permissions.getAll();
   const used = new Set(Object.values(await getWatches()).map((w) => originPattern(w.url)));
   for (const s of Object.values(await pickerSessions())) used.add(originPattern(s.url));
+  const kept = await keptSites();
+  for (const p of kept) used.add(p);
+  await updateKeptSites(() => kept);
   for (const origin of origins) {
     if (!used.has(origin) && /^https?:\/\//.test(origin)) {
       await chrome.permissions.remove({ origins: [origin] }).catch(() => {}); // required ones can't be removed
@@ -1310,9 +1329,18 @@ async function releaseScreenshotAccess() {
 
 async function releaseUnusedOrigins(removedUrls) {
   const used = [...Object.values(await getWatches()), ...Object.values(await pickerSessions())].map((w) => originPattern(w.url));
+  used.push(...await getKeptSites());
   const patterns = [...new Set(removedUrls.map(originPattern))].filter((p) => !used.includes(p));
   if (patterns.length) await chrome.permissions.remove({ origins: patterns }).catch(() => {});
 }
+
+// Access taken away elsewhere (e.g. on chrome://extensions) is forgotten
+// here too, so the Site access page and later checks agree with Chrome.
+chrome.permissions.onRemoved.addListener(async ({ origins = [] }) => {
+  if (origins.length) await updateKeptSites((list) => list.filter((p) => !origins.includes(p)));
+  await broadcast({ type: 'sites' });
+});
+chrome.permissions.onAdded.addListener(() => broadcast({ type: 'sites' }));
 
 // ---------------------------------------------------------------------------
 // Messages
@@ -1418,6 +1446,29 @@ const uiHandlers = {
 
   async releaseUnusedAccess() {
     await releaseUnusedAccess();
+    return {};
+  },
+
+  // Remembers a site the user just allowed on the Site access page, so its
+  // access isn't given back while no watch uses it. Chrome's prompt has to
+  // run in the page (it needs the click), so this only records it.
+  async keepSite({ pattern }) {
+    if (!isSitePattern(pattern)) throw new Error('Enter one site, like example.com');
+    checkSiteAllowed(await getPolicy(), pattern.replace(/\*$/, ''));
+    if (!(await chrome.permissions.contains({ origins: [pattern] }))) throw new Error('Chrome did not allow access to that site');
+    await updateKeptSites((list) => [...list, pattern]);
+    await broadcast({ type: 'sites' });
+    return {};
+  },
+
+  // Takes away access to one site, or to all sites ('<all_urls>'). Watches
+  // on it are kept; their checks report the missing access until it's allowed
+  // again.
+  async revokeSite({ pattern }) {
+    if (pattern !== ALL_SITES && !isSitePattern(pattern)) throw new Error('Unknown site');
+    await updateKeptSites((list) => list.filter((p) => p !== pattern));
+    await chrome.permissions.remove({ origins: [pattern] }).catch(() => {});
+    await broadcast({ type: 'sites' });
     return {};
   },
 

@@ -1248,6 +1248,40 @@ try {
     await send({ type: 'deleteWatch', id: res.id });
   });
 
+  await step('site access page lists sites, the watches on each, and sites that need access', async () => {
+    const local = `http://localhost:${server.address().port}`;
+    const mine = await send({ type: 'createWatch', watch: { url: `${base}/product`, name: 'Site page product' } });
+    const other = await send({ type: 'createWatch', watch: { url: `${local}/public`, name: 'Needs localhost', paused: true } });
+    await page.evaluate(() => { location.hash = '#/sites'; });
+    await page.waitForSelector('h1:text("Site access")');
+    const row = (pattern) => page.locator(`tr[data-pattern="${pattern}"]`);
+    await row('http://127.0.0.1/*').locator('a', { hasText: 'Site page product' }).waitFor({ state: 'attached' }); // may be folded under "and N more"
+    assert.equal(await row('http://127.0.0.1/*').locator('.site-status').textContent(), 'Allowed for watches');
+    assert.equal(await row('http://localhost/*').locator('.site-status').textContent(), 'Needs access');
+    assert.equal(await row('http://localhost/*').locator('button').textContent(), 'Allow');
+    // Bad input never reaches Chrome's prompt.
+    await page.fill('#site-input', 'ftp://example.com');
+    await page.click('.site-add button[type=submit]');
+    await page.waitForSelector('.site-add .error:text("Only http")');
+    // Sites are only remembered once Chrome has granted them, and only single sites.
+    assert.match((await send({ type: 'keepSite', pattern: 'https://not-granted.example/*' })).error, /did not allow/);
+    assert.match((await send({ type: 'keepSite', pattern: '<all_urls>' })).error, /one site/);
+    assert.match((await send({ type: 'revokeSite', pattern: 'javascript:alert(1)' })).error, /Unknown site/);
+    // Revoking asks first and lists the watches that depend on the site.
+    await row('http://127.0.0.1/*').locator('button', { hasText: 'Revoke' }).click();
+    await page.waitForSelector('dialog h2:text("Revoke access to http://127.0.0.1?")');
+    await page.locator('dialog a', { hasText: 'Site page product' }).waitFor({ state: 'attached' });
+    await page.click('dialog button:text("Cancel")');
+    assert.equal((await watchOf(mine.id)).paused, false);
+    if (process.env.SHOT_DIR) {
+      await page.setViewportSize({ width: 1200, height: 800 });
+      await page.screenshot({ path: path.join(process.env.SHOT_DIR, 'sites.png'), fullPage: true });
+    }
+    await send({ type: 'deleteWatch', id: mine.id });
+    await send({ type: 'deleteWatch', id: other.id });
+    await page.evaluate(() => { location.hash = '#/'; });
+  });
+
   await step('popup renders', async () => {
     const p = await context.newPage();
     await p.goto(`chrome-extension://${extId}/src/ui/popup.html`);
@@ -1291,8 +1325,12 @@ try {
         img.src = src;
       }), first.shot);
       assert.ok(size[0] >= 300 && size[0] <= 340 && size[1] >= 120 && size[1] <= 160, `cropped to the watched part: ${size}`);
-      await sendTo({ type: 'checkNow', id });
-      assert.equal((await historyOf(id)).length, 1, `the same picture is not a change: ${(await watchIn(id)).lastSummary}`);
+      // Several checks, since Chrome doesn't capture a hidden window the same
+      // way every time; none of them may count as a change.
+      for (let i = 0; i < 5; i++) {
+        await sendTo({ type: 'checkNow', id });
+        assert.equal((await historyOf(id)).length, 1, `the same picture is not a change (check ${i + 2}): ${(await watchIn(id)).lastSummary}`);
+      }
       shotColor = 'red';
       await sendTo({ type: 'checkNow', id });
       const h = await historyOf(id);

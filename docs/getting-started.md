@@ -30,7 +30,8 @@ review this repository and publish it internally; point them at
 3. Click **Watch whole page**.
 4. Chrome asks whether the extension may read this site. Click **Allow**. This
    is asked once per site, and the access is given back when you delete the
-   last watch on that site.
+   last watch on that site. The **Site access** button in the inbox lists every
+   site you've allowed (see [Site access](site-access.md)).
 
 That's it. The page is checked every hour by default. The first check saves a
 starting version; from then on, every check compares the page with the last

@@ -6,8 +6,10 @@ import { formatMarks } from '../lib/formatting.js';
 import { markupLines, markupKey } from '../lib/markup.js';
 import { changedCells, sameShape } from '../lib/shots.js';
 import { RULE_TYPES, RULE_SOURCES, normalizeCondition, numberFocus } from '../lib/conditions.js';
-import { DEFAULT_INTERVAL_MINUTES, DEFAULT_HISTORY, SIGN_IN_ACTIONS, isHttpUrl } from '../lib/watch.js';
-import { getLog, getSettings, DIGEST_CHOICES } from '../lib/storage.js';
+import {
+  DEFAULT_INTERVAL_MINUTES, DEFAULT_HISTORY, SIGN_IN_ACTIONS, isHttpUrl, originPattern,
+} from '../lib/watch.js';
+import { getLog, getSettings, getKeptSites, DIGEST_CHOICES } from '../lib/storage.js';
 import { visualDocument, sourceLines } from './visual.js';
 import { numberSeries, numberChart } from './chart.js';
 import { encryptBackup, decryptBackup, isEncrypted } from '../lib/backup.js';
@@ -15,6 +17,7 @@ import { getPolicy, isManaged, checkSiteAllowed } from '../lib/policy.js';
 import { historyCsv } from '../lib/csv.js';
 import { SIGN_IN_MESSAGE } from '../lib/signin.js';
 import { SOUNDS, soundName, playSound } from '../lib/sounds.js';
+import { siteRows, siteUrl } from '../lib/sites.js';
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -36,12 +39,14 @@ try {
 }
 
 // ---------------------------------------------------------------------------
-// Routing: #/w/<id>, #/w/<id>/edit, #/new, #/new-many, #/settings
+// Routing: #/w/<id>, #/w/<id>/edit, #/new, #/new-many, #/settings, #/sites
 
 function route() {
-  const m = /^#\/(?:w\/([^/]+)(\/edit)?|(new)|(settings)|(new-many))$/.exec(location.hash);
-  if (!m) return { id: null, edit: false, isNew: false, settings: false, isNewMany: false };
-  return { id: m[1] ? decodeURIComponent(m[1]) : null, edit: !!m[2], isNew: !!m[3], settings: !!m[4], isNewMany: !!m[5] };
+  const m = /^#\/(?:w\/([^/]+)(\/edit)?|(new)|(settings)|(new-many)|(sites))$/.exec(location.hash);
+  if (!m) return { id: null, edit: false, isNew: false, settings: false, isNewMany: false, sites: false };
+  return {
+    id: m[1] ? decodeURIComponent(m[1]) : null, edit: !!m[2], isNew: !!m[3], settings: !!m[4], isNewMany: !!m[5], sites: !!m[6],
+  };
 }
 
 function go(hash) {
@@ -206,9 +211,14 @@ function scriptsNeededBanner(watch) {
 }
 
 async function renderDetail() {
-  const { id, edit, isNew, settings, isNewMany } = route();
+  const { id, edit, isNew, settings, isNewMany, sites } = route();
   const detail = $('detail');
   if (settings) return detail.replaceChildren(await settingsForm(), aboutSection());
+  if (sites) {
+    const page = await sitesPage();
+    if (route().sites) detail.replaceChildren(page);
+    return;
+  }
   if (isNew) return detail.replaceChildren(watchForm(null));
   if (isNewMany) return detail.replaceChildren(addManyForm());
   const watch = state.watches.find((w) => w.id === id);
@@ -1283,6 +1293,204 @@ async function settingsForm() {
   el('div', { class: 'row' }, el('button', { class: 'primary', type: 'submit' }, 'Save')));
 }
 
+// ---------------------------------------------------------------------------
+// Site access: the sites Chrome lets the extension read, which watches use
+// each one, and buttons to allow or revoke access.
+
+const ALL_SITES = '<all_urls>';
+
+// Lists watches as links; past the first few, the rest fold away.
+function watchLinks(watches, shown = 5) {
+  if (!watches.length) return el('span', { class: 'muted' }, 'No watches');
+  const item = (w) => el('li', {},
+    el('a', { href: `#/w/${encodeURIComponent(w.id)}` }, w.name),
+    w.paused ? el('span', { class: 'muted' }, ' (paused)') : null);
+  const cut = watches.length > shown + 1 ? shown : watches.length;
+  return el('div', {},
+    el('ul', { class: 'site-watches' }, ...watches.slice(0, cut).map(item)),
+    cut < watches.length ? el('details', { class: 'site-more' },
+      el('summary', {}, `and ${watches.length - cut} more`),
+      el('ul', { class: 'site-watches' }, ...watches.slice(cut).map(item))) : null);
+}
+
+function siteAllowedByPolicy(pattern) {
+  try {
+    if (state.policy) checkSiteAllowed(state.policy, pattern.replace(/\*$/, ''));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Asks Chrome for access. Must run straight from a click, before any other
+// await, or Chrome refuses to show its prompt.
+function askChrome(patterns) {
+  return chrome.permissions.request({ origins: patterns }).catch((e) => {
+    toast(e.message);
+    return false;
+  });
+}
+
+async function revokeSite(row) {
+  const active = row.watches.filter((w) => !w.paused);
+  const pause = el('input', { type: 'checkbox', checked: active.length > 0 });
+  const body = row.watches.length ? [
+    el('p', {}, `${row.watches.length === 1 ? 'This watch uses' : `These ${row.watches.length} watches use`} ${row.label}. They stay saved, with their history, but can't be checked until you allow the site again:`),
+    watchLinks(row.watches),
+    active.length ? el('label', { class: 'check' }, pause, el('span', {}, 'Pause them too',
+      el('div', { class: 'hint' }, 'Otherwise each check fails and, after a few, you get an error alert.'))) : null,
+  ] : [el('p', {}, `No watch uses ${row.label}. You can allow it again here at any time.`)];
+  if (!await dialog(`Revoke access to ${row.label}?`, body.filter(Boolean), 'Revoke access')) return;
+  try {
+    if (active.length && pause.checked) await call('bulk', { ids: active.map((w) => w.id), action: 'pause' });
+    await call('revokeSite', { pattern: row.pattern });
+    toast(`Access to ${row.label} revoked.`);
+  } catch (err) {
+    toast(err.message);
+  }
+  renderDetail();
+}
+
+async function revokeAllSites(screenshotWatches) {
+  const body = [
+    el('p', {}, 'Chrome only lets an extension take screenshots of a page with access to all sites, so it was asked for when you turned on screenshots for a watch. It is given back by itself once no watch takes screenshots.'),
+    screenshotWatches.length
+      ? el('p', {}, `Revoking it now stops screenshots for ${screenshotWatches.length === 1 ? 'this watch' : `these ${screenshotWatches.length} watches`}:`)
+      : null,
+    screenshotWatches.length ? watchLinks(screenshotWatches) : null,
+    el('p', { class: 'hint' }, "Sites you allowed while this was on may show up below as needing access afterwards, because Chrome didn't record them separately. Allow them again from this page."),
+  ];
+  if (!await dialog('Revoke access to all sites?', body.filter(Boolean), 'Revoke access')) return;
+  try {
+    await call('revokeSite', { pattern: ALL_SITES });
+    toast('Access to all sites revoked.');
+  } catch (err) {
+    toast(err.message);
+  }
+  renderDetail();
+}
+
+async function sitesPage() {
+  const [{ origins = [] }, kept] = await Promise.all([chrome.permissions.getAll(), getKeptSites()]);
+  const { broad, rows } = siteRows({ origins, watches: state.watches, kept });
+  const missing = rows.filter((r) => !r.granted);
+
+  const input = el('input', {
+    type: 'text', id: 'site-input', placeholder: 'example.com or https://example.com/page',
+    autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Site to allow',
+  });
+  const error = el('p', { class: 'error', hidden: true });
+  const addForm = el('form', {
+    class: 'site-add',
+    onsubmit: async (e) => {
+      e.preventDefault();
+      error.hidden = true;
+      let pattern;
+      // Check the address and the organization's rules first, so Chrome is
+      // never asked about a site that can't be watched.
+      try {
+        const url = siteUrl(input.value);
+        if (state.policy) checkSiteAllowed(state.policy, url);
+        pattern = originPattern(url);
+      } catch (err) {
+        error.textContent = err.message;
+        error.hidden = false;
+        return;
+      }
+      if (!await askChrome([pattern])) return;
+      try {
+        await call('keepSite', { pattern });
+        input.value = '';
+        toast('Access allowed. It stays until you revoke it here.');
+        renderDetail();
+      } catch (err) {
+        error.textContent = err.message;
+        error.hidden = false;
+      }
+    },
+  },
+  el('h2', {}, 'Allow a new site'),
+  el('p', { class: 'hint' }, 'Grant access before you add watches for a site, e.g. to sign in and pick parts of its pages later. The whole site is allowed (every page on that address), but not its subdomains.'),
+  el('div', { class: 'inline' }, input, el('button', { class: 'primary', type: 'submit' }, 'Allow')),
+  error);
+
+  const screenshotWatches = state.watches.filter((w) => w.watchScreenshot)
+    .map((w) => ({ id: w.id, name: w.name || w.url, paused: !!w.paused }));
+  const broadSection = broad.length ? el('div', { class: 'banner site-broad' },
+    el('span', {},
+      el('strong', {}, 'Access to all sites is on. '),
+      broad.includes(ALL_SITES)
+        ? `It's held for watches that compare screenshots (${screenshotWatches.length || 'none left'}). While it's on, Chrome counts every site as allowed, so sites can't be revoked one by one; the extension still only reads the sites listed below.`
+        : 'It was granted on chrome://extensions. While it is on, sites can\'t be revoked one by one; the extension still only reads the sites listed below.'),
+    broad.includes(ALL_SITES)
+      ? el('button', { class: 'danger', onclick: () => revokeAllSites(screenshotWatches) }, 'Revoke')
+      : null) : null;
+
+  const allowMissing = missing.length > 1 ? el('button', {
+    onclick: async () => {
+      const allowed = missing.filter((r) => siteAllowedByPolicy(r.pattern));
+      if (!allowed.length) {
+        toast("Your organization doesn't allow these sites.");
+        return;
+      }
+      if (!await askChrome(allowed.map((r) => r.pattern))) return;
+      toast('Access allowed. Checking those watches now.');
+      const ids = allowed.flatMap((r) => r.watches.filter((w) => !w.paused).map((w) => w.id));
+      await call('bulk', { ids, action: 'checkNow' }).catch(() => {});
+      renderDetail();
+    },
+  }, `Allow all ${missing.length} sites that need access`) : null;
+
+  const status = (r) => {
+    if (!r.granted) return el('span', { class: 'site-status need' }, 'Needs access');
+    if (r.kept) return el('span', { class: 'site-status' }, 'Allowed by you');
+    if (r.watches.length) return el('span', { class: 'site-status' }, 'Allowed for watches');
+    return el('span', { class: 'site-status muted', title: 'No watch uses it, so it is given back the next time Chrome starts.' }, 'Not used');
+  };
+  const action = (r) => {
+    if (!r.granted) {
+      return el('button', {
+        class: 'primary',
+        onclick: async () => {
+          if (!siteAllowedByPolicy(r.pattern)) {
+            toast(`Your organization doesn't allow ${r.label}.`);
+            return;
+          }
+          if (!await askChrome([r.pattern])) return;
+          toast(`Access to ${r.label} allowed.`);
+          for (const w of r.watches) if (!w.paused) call('checkNow', { id: w.id }).catch(() => {});
+          renderDetail();
+        },
+      }, 'Allow');
+    }
+    // An all-sites grant covers this site anyway, so revoking it alone would
+    // change nothing for its watches.
+    const covered = broad.length > 0 && r.watches.length > 0;
+    return el('button', {
+      class: 'danger',
+      disabled: covered,
+      title: covered ? 'Access to all sites is on, which covers this site. Revoke that first.' : `Take away access to ${r.label}`,
+      onclick: () => revokeSite(r),
+    }, 'Revoke');
+  };
+
+  const table = rows.length ? el('table', { class: 'log sites-table' },
+    el('thead', {}, el('tr', {}, el('th', {}, 'Site'), el('th', {}, 'Access'), el('th', {}, 'Watches that use it'), el('th', {}, ''))),
+    el('tbody', {}, ...rows.map((r) => el('tr', { dataset: { pattern: r.pattern } },
+      el('td', { class: 'site-name' }, r.label),
+      el('td', {}, status(r)),
+      el('td', {}, watchLinks(r.watches)),
+      el('td', {}, action(r)))))) : el('p', { class: 'muted' }, "The extension can't read any site yet. Sites show up here as you add watches or allow them above.");
+
+  return el('section', { class: 'sites' },
+    el('h1', {}, 'Site access'),
+    el('p', { class: 'hint' }, 'Open Page Watcher can only read the sites you allow. Access for a watch is asked for when you add it and given back when no watch uses the site any more. Sites you allow on this page stay allowed until you revoke them. Revoking never deletes a watch.'),
+    broadSection,
+    addForm,
+    el('div', { class: 'row' }, el('h2', {}, `Sites (${rows.length})`), allowMissing),
+    table);
+}
+
 // About
 
 const DONATION_BTC = 'bc1qgkla5xl804l78dmukx80zerepgkxndmtk0pach';
@@ -1340,6 +1548,7 @@ function toast(text) {
 $('add').addEventListener('click', () => go('#/new'));
 $('add-many').addEventListener('click', () => go('#/new-many'));
 $('settings').addEventListener('click', () => go('#/settings'));
+$('sites').addEventListener('click', () => go('#/sites'));
 $('mark-all').addEventListener('click', () => call('markAllRead'));
 $('search').addEventListener('input', (e) => {
   state.search = e.target.value;
@@ -1518,8 +1727,8 @@ function render() {
   }
   renderList();
   // Don't wipe a form the user is typing in.
-  const { edit, isNew, settings, isNewMany } = route();
-  if ((edit || isNew || settings || isNewMany) && $('detail').querySelector('form') && (state.picking || document.activeElement?.closest('form'))) return;
+  const { edit, isNew, settings, isNewMany, sites } = route();
+  if ((edit || isNew || settings || isNewMany || sites) && $('detail').querySelector('form') && (state.picking || document.activeElement?.closest('form'))) return;
   renderDetail();
 }
 

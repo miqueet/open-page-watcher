@@ -62,15 +62,53 @@ export function changedCells(a, b, width, height, cell = 12, tolerance = PIXEL_T
   return boxes;
 }
 
-// Whether a capture can be trusted: the viewport and the watched area were
-// the same just before and just after it (within a pixel). The hidden window
-// can still be resizing when it is first shown, and a picture taken then
-// would be cropped at the wrong scale. `before`/`after` are
-// { vw, vh, x, y, w, h } in CSS pixels; `shot` is { width, height }.
+// Whether a capture can be trusted: the viewport, the watched area and the
+// device pixel ratio were the same just before and just after it (within a
+// pixel). The hidden window can still be resizing when it is first shown,
+// and a picture taken then would be cropped at the wrong scale.
+// `before`/`after` are { vw, vh, dpr, x, y, w, h } in CSS pixels; `shot` is
+// { width, height }.
 export function steadyCapture(before, after, shot) {
   if (!before || !after || !shot || !(before.vw > 0) || !(before.vh > 0) || !(shot.width > 0) || !(shot.height > 0)) return false;
   for (const k of ['vw', 'vh', 'x', 'y', 'w', 'h']) if (!(Math.abs(before[k] - after[k]) <= 1)) return false;
+  if ((before.dpr || 1) !== (after.dpr || 1)) return false;
   return true;
+}
+
+// Where the watched area is in a capture, in the capture's own pixels:
+// { sx, sy, sw, sh }, or null when the capture doesn't hold all of it.
+//
+// Chrome normally captures the whole viewport at the device pixel ratio.
+// Sometimes the picture has another size, and it matters why:
+//  - it has the viewport's shape: Chrome scaled the whole viewport, so the
+//    area is scaled by the same amount;
+//  - it has another shape: Chrome drew only the part of the viewport that
+//    fits in the window (seen with hidden windows whose window is smaller
+//    than their viewport). Pixels keep the device pixel ratio, and the
+//    picture is only usable if the watched area lies inside it.
+// Stretching a cut-off picture to fit the viewport would crop the wrong part
+// at the wrong scale, so an unchanged page would look different.
+export function captureCrop(area, shot) {
+  if (!area || !shot || !(area.vw > 0) || !(area.vh > 0) || !(shot.width > 0) || !(shot.height > 0)) return null;
+  const dpr = area.dpr > 0 ? area.dpr : 1;
+  const near = (a, b) => Math.abs(a - b) <= 2;
+  let scaleX;
+  let scaleY;
+  if (near(shot.width, area.vw * dpr) && near(shot.height, area.vh * dpr)) {
+    scaleX = shot.width / area.vw;
+    scaleY = shot.height / area.vh;
+  } else if (Math.abs((shot.width / shot.height) / (area.vw / area.vh) - 1) <= 0.01) {
+    scaleX = scaleY = shot.width / area.vw;
+  } else {
+    scaleX = scaleY = dpr;
+  }
+  const sx = Math.round(area.x * scaleX);
+  const sy = Math.round(area.y * scaleY);
+  const sw = Math.round(area.w * scaleX);
+  const sh = Math.round(area.h * scaleY);
+  // A pixel of rounding is fine; more means part of the area is missing.
+  if (sw < 1 || sh < 1 || sx + sw > shot.width + 1 || sy + sh > shot.height + 1) return null;
+  return { sx, sy, sw: Math.min(sw, shot.width - sx), sh: Math.min(sh, shot.height - sy) };
 }
 
 // The notification text for a screenshot-only change.

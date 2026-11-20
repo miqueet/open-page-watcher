@@ -8,7 +8,7 @@ alerted.
 
 | Message | What it means | What to do |
 | --- | --- | --- |
-| Access to this site has not been granted. Open the watch and click Allow. | Chrome hasn't given the extension access to this site (or it was removed) | Click **Allow** on the watch |
+| Access to this site has not been granted. Open the watch and click Allow. | Chrome hasn't given the extension access to this site (or it was removed) | Click **Allow** on the watch, or on its site in [Site access](site-access.md) |
 | None of the selected elements were found on the page | Your selectors don't match anything any more, usually after a redesign; or the content only appears once scripts run | Use **Reselect on page** in the editor. If the element exists in the browser but not in "View page source", use a [hidden tab](loading-pages.md#hidden-tab) |
 | Selector error: … | A CSS selector or XPath expression isn't valid, or the XPath returns something other than elements, text or attributes (like `count()`) | Fix it in the editor; test it in the console as shown in [Selectors](selectors.md#testing-a-selector-before-you-save) |
 | None of the JSON paths matched anything | The `json:` paths point at keys that aren't in the response | Open the address in a tab to see the JSON and check the path, including case |
@@ -27,6 +27,8 @@ alerted.
 | Your organization doesn't allow watching … | Your IT policy blocks this site | Ask your IT team; see [For IT teams](enterprise.md) |
 | Your organization allows at most N watches | IT policy limit | Delete watches you don't need |
 | Invalid regular expression: … | The regex filter, a rule or an ignore entry isn't valid | Fix it; see [Regular expressions](regex.md) |
+| No screenshot: The page kept moving or resizing while the screenshot was taken | In the watch's log. The page or the hidden window was still changing size during four tries | Nothing if it's rare; the text was still checked. If it's every check, the page animates: raise **Wait after load (seconds)**, or pick a part that holds still. See [When a screenshot is skipped](html-and-visual-changes.md#when-a-screenshot-is-skipped) |
+| No screenshot: The screenshot didn't hold the whole watched area | In the watch's log. Chrome captured only part of the page, and the watched parts weren't all in it | Pick a smaller part, nearer the top of the page |
 | Wrong password, or the file is damaged | Importing a protected backup | Check the password; it can't be recovered |
 
 ## "It changed but I wasn't alerted"
