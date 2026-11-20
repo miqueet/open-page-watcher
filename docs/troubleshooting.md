@@ -8,7 +8,7 @@ alerted.
 
 | Message | What it means | What to do |
 | --- | --- | --- |
-| Access to this site has not been granted. Open the watch and click Allow. | Chrome hasn't given the extension access to this site (or it was removed) | Click **Allow** on the watch |
+| Access to this site has not been granted. Open the watch and click Allow. | Chrome hasn't given the extension access to this site (or it was removed) | Click **Allow** on the watch, or on its site in [Site access](site-access.md) |
 | None of the selected elements were found on the page | Your selectors don't match anything any more, usually after a redesign; or the content only appears once scripts run | Use **Reselect on page** in the editor. If the element exists in the browser but not in "View page source", use a [hidden tab](loading-pages.md#hidden-tab) |
 | Selector error: … | A CSS selector or XPath expression isn't valid, or the XPath returns something other than elements, text or attributes (like `count()`) | Fix it in the editor; test it in the console as shown in [Selectors](selectors.md#testing-a-selector-before-you-save) |
 | None of the JSON paths matched anything | The `json:` paths point at keys that aren't in the response | Open the address in a tab to see the JSON and check the path, including case |

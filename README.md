@@ -169,7 +169,10 @@ team can review this repository and publish it internally or allow-list it.
   you're taken back to the editor with the fields filled in. Nothing changes
   until you click **Save**.
 - Chrome asks once per site for permission to read it. Watches on a site you
-  haven't allowed show an **Allow** button in the inbox.
+  haven't allowed show an **Allow** button in the inbox. **Site access** in the
+  inbox lists every site the extension can read and the watches that use each
+  one, with **Revoke** per site and a box to allow a new site ahead of time
+  ([details](docs/site-access.md)).
 - Open the inbox from the popup to see changes, edit how often a page is
   checked, set alert conditions, or choose what happens when a page asks you to
   sign in.
@@ -193,6 +196,7 @@ examples you can copy into the watch editor:
 | [Loading pages](docs/loading-pages.md) | Download vs. hidden tab vs. live mode, sign-ins, PDFs, feeds, JSON |
 | [Formatting changes](docs/formatting.md) | Alerts when text turns bold, becomes a heading or changes color |
 | [HTML and visual changes](docs/html-and-visual-changes.md) | Alerts when elements, attributes or the way the page looks change, even if the text doesn't |
+| [Site access](docs/site-access.md) | Which sites the extension can read, which watches use each, revoking and allowing sites |
 | [Reviewing changes](docs/reviewing-changes.md) | Comparison views, the number chart, CSV export, backups, shortcuts |
 | [Examples and use cases](docs/examples.md) | 22 step-by-step recipes: prices, restocks, status pages, releases, jobs, policies, APIs |
 | [Troubleshooting](docs/troubleshooting.md) | What every error means and how to fix it |
@@ -208,7 +212,7 @@ examples you can copy into the watch editor:
 | `activeTab`, `scripting` | Inject the element picker into the tab you're on when you ask for it, read rendered pages, and highlight changes on a page you open from the inbox |
 | `contextMenus` | The "Watch this page" right-click items |
 | `tts` | Read changes aloud, if you turn that on for a watch (on-device voices only) |
-| Site access (optional, per site) | Requested only for sites you watch, and released when you stop |
+| Site access (optional, per site) | Requested only for sites you watch (or allow yourself on the Site access page), and released when you stop or revoke it |
 | Access to all sites (optional) | Only if you turn on screenshots for a watch: Chrome lets an extension screenshot a tab only with this. Given back when no watch takes screenshots. Checks still only load the pages you chose |
 
 ### Screenshots and "access to all sites"

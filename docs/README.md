@@ -20,6 +20,7 @@ New here? Read [Getting started](getting-started.md), then pick a recipe from
 | [Loading pages](loading-pages.md) | Downloading vs. a hidden tab vs. live mode, pages behind a sign-in, script-only pages, PDFs, feeds and JSON |
 | [Formatting changes](formatting.md) | Alerting when text turns bold, becomes a heading, changes color or a link changes address |
 | [HTML and visual changes](html-and-visual-changes.md) | Alerting when elements or attributes change (a button gets disabled, an image is swapped), or when a screenshot of the page looks different |
+| [Site access](site-access.md) | Seeing which sites the extension can read and which watches use each one, revoking access, and allowing a site before you watch it |
 | [Reviewing changes](reviewing-changes.md) | The inbox, the comparison views, the number chart, highlighting, CSV export, backups and keyboard shortcuts |
 | [Examples and use cases](examples.md) | Step-by-step recipes: price drops, restocks, job boards, status pages, release notes, policies, APIs and more |
 | [Troubleshooting](troubleshooting.md) | What each error means and how to fix it |

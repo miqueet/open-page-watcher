@@ -19,8 +19,9 @@ import {
 } from './lib/watch.js';
 import {
   getWatches, getWatch, updateWatches, getHistory, appendHistory, deleteHistory, appendLog,
-  getSettings, sanitizeSettings, serialize,
+  getSettings, sanitizeSettings, serialize, getKeptSites, updateKeptSites,
 } from './lib/storage.js';
+import { isSitePattern } from './lib/sites.js';
 
 const TICK_ALARM = 'tick';
 const FETCH_TIMEOUT_MS = 30_000;
@@ -1129,17 +1130,36 @@ async function hasSiteAccess(url) {
   const { origins = [] } = await chrome.permissions.getAll();
   if (!origins.includes(ALL_SITES)) return chrome.permissions.contains({ origins: [pattern] });
   if (origins.includes(pattern)) return true;
+  if ((await getKeptSites()).includes(pattern)) return true;
   const chosen = [...Object.values(await getWatches()), ...Object.values(await pickerSessions())];
   return chosen.some((w) => isHttpUrl(w.url) && originPattern(w.url) === pattern);
 }
 
+// Sites the user allowed on the Site access page and the organization still
+// allows. Their access is kept even while no watch uses them.
+async function keptSites() {
+  const policy = await getPolicy();
+  return (await getKeptSites()).filter((p) => {
+    try {
+      checkSiteAllowed(policy, p.replace(/\*$/, ''));
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 // Releases site access that no remaining watch needs.
 // Removes every optional site permission no watch (or open picker) uses, e.g.
-// access granted for a watch that then couldn't be saved.
+// access granted for a watch that then couldn't be saved. Sites the user
+// allowed on the Site access page stay, unless the organization now blocks them.
 async function releaseUnusedAccess() {
   const { origins = [] } = await chrome.permissions.getAll();
   const used = new Set(Object.values(await getWatches()).map((w) => originPattern(w.url)));
   for (const s of Object.values(await pickerSessions())) used.add(originPattern(s.url));
+  const kept = await keptSites();
+  for (const p of kept) used.add(p);
+  await updateKeptSites(() => kept);
   for (const origin of origins) {
     if (!used.has(origin) && /^https?:\/\//.test(origin)) {
       await chrome.permissions.remove({ origins: [origin] }).catch(() => {}); // required ones can't be removed
@@ -1159,9 +1179,18 @@ async function releaseScreenshotAccess() {
 
 async function releaseUnusedOrigins(removedUrls) {
   const used = [...Object.values(await getWatches()), ...Object.values(await pickerSessions())].map((w) => originPattern(w.url));
+  used.push(...await getKeptSites());
   const patterns = [...new Set(removedUrls.map(originPattern))].filter((p) => !used.includes(p));
   if (patterns.length) await chrome.permissions.remove({ origins: patterns }).catch(() => {});
 }
+
+// Access taken away elsewhere (e.g. on chrome://extensions) is forgotten
+// here too, so the Site access page and later checks agree with Chrome.
+chrome.permissions.onRemoved.addListener(async ({ origins = [] }) => {
+  if (origins.length) await updateKeptSites((list) => list.filter((p) => !origins.includes(p)));
+  await broadcast({ type: 'sites' });
+});
+chrome.permissions.onAdded.addListener(() => broadcast({ type: 'sites' }));
 
 // ---------------------------------------------------------------------------
 // Messages
@@ -1267,6 +1296,29 @@ const uiHandlers = {
 
   async releaseUnusedAccess() {
     await releaseUnusedAccess();
+    return {};
+  },
+
+  // Remembers a site the user just allowed on the Site access page, so its
+  // access isn't given back while no watch uses it. Chrome's prompt has to
+  // run in the page (it needs the click), so this only records it.
+  async keepSite({ pattern }) {
+    if (!isSitePattern(pattern)) throw new Error('Enter one site, like example.com');
+    checkSiteAllowed(await getPolicy(), pattern.replace(/\*$/, ''));
+    if (!(await chrome.permissions.contains({ origins: [pattern] }))) throw new Error('Chrome did not allow access to that site');
+    await updateKeptSites((list) => [...list, pattern]);
+    await broadcast({ type: 'sites' });
+    return {};
+  },
+
+  // Takes away access to one site, or to all sites ('<all_urls>'). Watches
+  // on it are kept; their checks report the missing access until it's allowed
+  // again.
+  async revokeSite({ pattern }) {
+    if (pattern !== ALL_SITES && !isSitePattern(pattern)) throw new Error('Unknown site');
+    await updateKeptSites((list) => list.filter((p) => p !== pattern));
+    await chrome.permissions.remove({ origins: [pattern] }).catch(() => {});
+    await broadcast({ type: 'sites' });
     return {};
   },
 

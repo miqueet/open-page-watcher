@@ -64,6 +64,10 @@ site. An entry that isn't a host name matches nothing, so a mistyped allow-list
 allows nothing rather than everything. If a watched page redirects, the site it
 lands on must be allowed too.
 
+The same lists apply to the inbox's [Site access](site-access.md) page: a user
+can't allow a site there that the policy blocks, and a site they allowed
+earlier is given back at the next browser start once the policy blocks it.
+
 ### Google Admin console
 
 Go to **Devices → Chrome → Apps & extensions → Users & browsers**, select the
