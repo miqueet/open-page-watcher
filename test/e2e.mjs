@@ -1281,7 +1281,11 @@ try {
     assert.equal(report.testCheck.ok, true, report.testCheck.error);
     assert.equal(report.testCheck.captured.sameAsLatestVersion, false);
     assert.equal(report.testCheck.captured.lines, editorConfig.split('\n').length + 3);
-    assert.deepEqual(report.testCheck.frames[0].editors, [{ kind: 'codemirror6', source: 'model', lines: editorConfig.split('\n').length + 1, chars: editorConfig.length + editorExtra.length }]);
+    const [ed] = report.testCheck.frames[0].editors;
+    assert.deepEqual({ kind: ed.kind, source: ed.source, lines: ed.lines, chars: ed.chars }, { kind: 'codemirror6', source: 'model', lines: editorConfig.split('\n').length + 1, chars: editorConfig.length + editorExtra.length });
+    assert.deepEqual(ed.attempts, [{ way: 'model', result: 'read' }]);
+    assert.equal(ed.hints.drawnLines, 5);
+    assert.match(report.testCheck.findings.join(' '), /codemirror6 code editor was read in full/);
     assert.equal(report.savedVersions.count, 1);
     assert.equal((await history(res.id)).length, 1, 'diagnostics saved nothing');
     const full = (await send({ type: 'diagnoseWatch', id: res.id, includeContent: true, includeAddresses: true })).report;

@@ -94,7 +94,9 @@ export function extractText(spec, doc = document) {
     const kept = text.replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ').split('\n').map((l) => l.replace(/\s+$/, ''));
     while (kept.length && !kept[0]) kept.shift();
     while (kept.length && !kept[kept.length - 1]) kept.pop();
-    if (!editorsSeen.has(node) && editorsRead.length < 50) editorsRead.push({ kind, source, lines: kept.length, chars: kept.join('\n').length });
+    if (!editorsSeen.has(node) && editorsRead.length < 50) editorsRead.push({
+      kind, source, lines: kept.length, chars: kept.join('\n').length, index: editorRoots.indexOf(node),
+    });
     editorsSeen.add(node);
     return kept;
   }
