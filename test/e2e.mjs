@@ -614,6 +614,46 @@ try {
     await send({ type: 'bulk', ids: after.filter((id) => !before.includes(id)), action: 'delete' });
   });
 
+  await step('export and import can include saved versions', async () => {
+    const before = Object.keys((await page.evaluate(() => chrome.storage.local.get('watches'))).watches);
+    const priceHistory = await history(priceId);
+    assert.ok(priceHistory.length >= 2, 'the price watch has saved versions');
+    await page.evaluate(() => { location.hash = '#/'; });
+    await page.click('#export');
+    assert.equal(await page.isVisible('#backup-pages'), false);
+    await page.check('#backup-history');
+    await page.uncheck('#backup-pages');
+    const [download] = await Promise.all([page.waitForEvent('download'), page.click('dialog button:text("Export")')]);
+    const file = path.join(userData, 'backup-history.json');
+    await download.saveAs(file);
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.deepEqual(saved.history[priceId].map((h) => h.text), priceHistory.map((h) => h.text));
+    assert.ok(saved.history[priceId].every((h) => !h.html && !h.shot), 'page copies were left out');
+    // A screenshot pointing at a web address is dropped on import; the text stays.
+    saved.history[priceId].push({ t: Date.now() - 1, text: 'tampered', shot: 'https://tracker.example/x.png' });
+    fs.writeFileSync(file, JSON.stringify(saved));
+
+    await page.setInputFiles('#import-file', file);
+    await page.click('dialog button:text("Cancel")'); // keep current settings
+    await page.waitForSelector(`#toast:text("Imported ${before.length} watches with")`);
+    const all = (await page.evaluate(() => chrome.storage.local.get('watches'))).watches;
+    // Imported watches are checked right away, so other copies get versions
+    // too; the copy of the price watch is the one with the tampered version.
+    let copy;
+    let copied;
+    for (const w of Object.values(all)) {
+      if (before.includes(w.id) || w.url !== all[priceId].url) continue;
+      const h = await history(w.id);
+      if (h.some((v) => v.text === 'tampered')) [copy, copied] = [w, h];
+    }
+    assert.ok(copy, 'the price watch was imported with its versions');
+    // A check right after importing may add the page as it is now at the end.
+    assert.deepEqual(copied.map((h) => h.text).slice(0, priceHistory.length + 1), [...priceHistory.map((h) => h.text), 'tampered']);
+    assert.ok(copied.every((h) => !h.shot));
+    assert.ok(copy.lastChangedAt > 0);
+    await send({ type: 'bulk', ids: Object.keys(all).filter((id) => !before.includes(id)), action: 'delete' });
+  });
+
   await step('keyboard shortcut is registered', async () => {
     const commands = await sw.evaluate(() => chrome.commands.getAll());
     assert.ok(commands.some((c) => c.name === 'watch-part'));

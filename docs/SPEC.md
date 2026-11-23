@@ -26,7 +26,7 @@ For how to use each feature, with examples, see the
 | Error alerts and check log | Alert after N failed checks in a row, and a log of the last 50 checks per watch |
 | Feeds, PDFs, JSON | RSS/Atom and sitemaps one entry per line, PDF text, pretty-printed JSON |
 | Pause, check now, edit, duplicate, delete | Yes |
-| Import / export | JSON, optionally password protected |
+| Import / export | JSON, optionally password protected, optionally with saved versions (history) |
 
 More features found in other popular monitors (Visualping, Page Monitor,
 changedetection.io), from their public listings and documentation:
@@ -234,6 +234,7 @@ These run on the device but were left out as security trade-offs:
 - `src/lib/conditions.js`: alert rules.
 - `src/lib/jsonpath.js`: the JSON path subset (parsed, never evaluated).
 - `src/lib/csv.js`: CSV export of saved versions.
+- `src/lib/history.js`: saved versions in backup files (export, validation on import, merging).
 - `src/lib/alerts.js`: change summaries, quiet hours and combined alerts.
 - `src/lib/policy.js`: organization policy.
 - `src/lib/sites.js`: the Site access list (which sites are allowed, kept, or

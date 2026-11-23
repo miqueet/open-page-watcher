@@ -143,13 +143,59 @@ Use the **Export** and **Import** buttons at the top of the inbox:
   file with a password** to encrypt it (AES-256-GCM, with a key made from your
   password using PBKDF2 with 600,000 rounds). Without the password the file
   can't be read, and it can't be recovered if you forget the password.
+- **Include saved versions (history)** also puts each watch's saved versions in
+  the file, so after importing you can still compare old versions, see the
+  number chart and export the history as CSV. It's off by default.
+  - **Include page copies and screenshots** (on once history is ticked) keeps
+    the copies of the page that the **Visual**, **HTML** and **Screenshot**
+    views need. Untick it for a much smaller file that has only the text (and
+    formatting) of each version.
 - **Import** adds watches from a file exported earlier, asking for the password
-  if the file is protected. Imported watches need site access again: open each
-  one and click **Allow**.
+  if the file is protected. If the file has saved versions, they are imported
+  with their watches and the message says how many came through. Imported
+  watches need site access again: open each one and click **Allow**.
 
-The export contains your watches, their settings and your general settings.
-Saved versions and logs are not included; they stay on the computer.
+Without the history option, the export contains your watches, their settings and
+your general settings. The check log (the **Log** tab) is never exported.
 
-**Use case:** move your watches to a new laptop, share a set of watches with a
-colleague (without a password, or tell them the password separately), or keep a
-copy before reinstalling the extension.
+### What's in the file with history
+
+| Part of each version | Always | With page copies and screenshots |
+| --- | --- | --- |
+| Time it was saved | yes | yes |
+| Text (what's compared) | yes | yes |
+| Formatting, for watches that count it | yes | yes |
+| Page copy (HTML) for the 5 newest versions | no | yes |
+| Screenshot for the 10 newest versions | no | yes |
+
+A file with page copies and screenshots can be tens of megabytes when you have
+many watches. Files up to 300 MB can be imported.
+
+### How imported history is checked
+
+The file might have been edited, or come from someone else, so every version is
+checked before it's saved:
+
+- Only the fields above are kept; anything else in the file is dropped.
+- Times must be real dates, not more than a day in the future. Text, formatting
+  and page copies have the same size limits as a normal check.
+- A screenshot must be an image stored inside the file (WebP, PNG or JPEG). One
+  that points to a web address, or is any other kind of file, is dropped, so an
+  imported file can't make the inbox load anything from the internet.
+- Page copies are shown the same way as your own: cleaned of scripts and shown
+  in a sandbox that can't load anything.
+- Each watch keeps at most its **Versions to keep**, and page copies and
+  screenshots only for its newest versions, just as after a check.
+- If your organization turns off screenshots, imported screenshots are dropped.
+
+Saved versions are added to the watches the file creates, never to watches you
+already have. Importing the same file twice gives you two copies of each watch,
+each with its own history.
+
+The first check after importing compares the page with the newest imported
+version, so if the page changed since the export you get an alert as usual.
+
+**Use case:** move your watches to a new laptop with everything they've seen so
+far (tick **Include saved versions**), share a set of watches with a colleague
+(without a password, or tell them the password separately), or keep a copy
+before reinstalling the extension.

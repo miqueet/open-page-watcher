@@ -15,6 +15,7 @@ import { numberSeries, numberChart } from './chart.js';
 import { encryptBackup, decryptBackup, isEncrypted } from '../lib/backup.js';
 import { getPolicy, isManaged, checkSiteAllowed } from '../lib/policy.js';
 import { historyCsv } from '../lib/csv.js';
+import { exportHistory, historyInFile, IMPORT_BATCH } from '../lib/history.js';
 import { SIGN_IN_MESSAGE } from '../lib/signin.js';
 import { SOUNDS, soundName, playSound } from '../lib/sounds.js';
 import { siteRows, siteUrl } from '../lib/sites.js';
@@ -1640,8 +1641,16 @@ $('export').addEventListener('click', async () => {
   protect.addEventListener('change', sync);
   pw.addEventListener('input', sync);
   pw2.addEventListener('input', sync);
+  const withHistory = el('input', { type: 'checkbox', id: 'backup-history' });
+  const withPages = el('input', { type: 'checkbox', id: 'backup-pages', checked: true });
+  const pagesRow = el('label', { class: 'check', hidden: true }, withPages, el('span', {}, 'Include page copies and screenshots',
+    el('div', { class: 'hint' }, 'Needed for the Visual, HTML and Screenshot views of older versions. Untick for a much smaller file with just the text.')));
+  withHistory.addEventListener('change', () => { pagesRow.hidden = !withHistory.checked; });
   const ok = await dialog('Export watches', [
-    el('p', { class: 'hint' }, 'Saves your watches and settings to a file on this computer. Saved versions are not included.'),
+    el('p', { class: 'hint' }, 'Saves your watches and settings to a file on this computer.'),
+    el('label', { class: 'check' }, withHistory, el('span', {}, 'Include saved versions (history)',
+      el('div', { class: 'hint' }, "Each watch's saved versions, so its history and changes can be reviewed after importing. The check log is not included."))),
+    pagesRow,
     el('label', { class: 'check' }, protect, el('span', {}, 'Protect the file with a password',
       el('div', { class: 'hint' }, 'Recommended if the file will leave this computer. Your watched addresses can be sensitive.'))),
     fields,
@@ -1649,6 +1658,15 @@ $('export').addEventListener('click', async () => {
   if (!ok) return;
   try {
     const { data } = await call('exportAll');
+    if (withHistory.checked) {
+      // Read here rather than in the background page: with page copies and
+      // screenshots the history can be larger than one message may be.
+      data.history = {};
+      for (const w of data.watches) {
+        const versions = exportHistory(await getHistory(w.id), { pages: withPages.checked });
+        if (versions.length) data.history[w.id] = versions;
+      }
+    }
     const day = new Date().toISOString().slice(0, 10);
     if (protect.checked) {
       toast('Encrypting…');
@@ -1668,7 +1686,8 @@ $('import-file').addEventListener('change', async (e) => {
   e.target.value = '';
   if (!file) return;
   try {
-    if (file.size > 20 * 1024 * 1024) throw new Error('That file is too large');
+    // Saved versions with page copies and screenshots make larger files.
+    if (file.size > 300 * 1024 * 1024) throw new Error('That file is too large');
     let data = JSON.parse(await file.text());
     if (isEncrypted(data)) {
       const pw = el('input', { type: 'password', id: 'import-password', autocomplete: 'current-password', required: true });
@@ -1678,8 +1697,29 @@ $('import-file').addEventListener('change', async (e) => {
     const includeSettings = Boolean(data?.settings) && await dialog('Import settings too?', [
       el('p', {}, 'This file also has settings (alerts, quiet hours). Replace your current settings with them?'),
     ], 'Replace settings');
-    const res = await call('importAll', { data, includeSettings });
-    toast(`Imported ${res.imported} watch${res.imported === 1 ? '' : 'es'}${res.skipped.length ? `, skipped ${res.skipped.length}` : ''}. Open each one and click Allow to grant site access.`);
+    // Saved versions are sent separately below, so they're left out here.
+    const res = await call('importAll', { data: { ...data, history: undefined }, includeSettings });
+    // Saved versions go a few at a time, so no message gets too large.
+    const history = historyInFile(data);
+    let versions = 0;
+    let historyFailed = 0;
+    if (history.size) toast('Importing saved versions…');
+    for (const [fileId, id] of res.ids || []) {
+      const list = history.get(fileId);
+      if (!list) continue;
+      for (let i = 0; i < list.length; i += IMPORT_BATCH) {
+        try {
+          versions += (await call('importHistory', { id, entries: list.slice(i, i + IMPORT_BATCH) })).added;
+        } catch {
+          historyFailed++;
+        }
+      }
+    }
+    const parts = [`Imported ${res.imported} watch${res.imported === 1 ? '' : 'es'}`];
+    if (versions) parts.push(` with ${versions} saved version${versions === 1 ? '' : 's'}`);
+    if (res.skipped.length) parts.push(`, skipped ${res.skipped.length}`);
+    if (historyFailed) parts.push(`. Some saved versions couldn't be imported`);
+    toast(`${parts.join('')}. Open each one and click Allow to grant site access.`);
   } catch (err) {
     toast(`Import failed: ${err.message}`);
   }

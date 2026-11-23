@@ -30,6 +30,8 @@ alerted.
 | No screenshot: The page kept moving or resizing while the screenshot was taken | In the watch's log. The page or the hidden window was still changing size during four tries | Nothing if it's rare; the text was still checked. If it's every check, the page animates: raise **Wait after load (seconds)**, or pick a part that holds still. See [When a screenshot is skipped](html-and-visual-changes.md#when-a-screenshot-is-skipped) |
 | No screenshot: The screenshot didn't hold the whole watched area | In the watch's log. Chrome captured only part of the page, and the watched parts weren't all in it | Pick a smaller part, nearer the top of the page |
 | Wrong password, or the file is damaged | Importing a protected backup | Check the password; it can't be recovered |
+| That file is too large | Importing a file over 300 MB | Export again without **Include page copies and screenshots** |
+| Some saved versions couldn't be imported | Importing a file with history. Usually a watch was deleted while its versions were still being imported | The watches themselves were imported. If you need every version, delete the new copies and import the file again |
 
 ## "It changed but I wasn't alerted"
 

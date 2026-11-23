@@ -31,7 +31,9 @@ managed Chrome browsers, and how to limit what it can do.
   `disableCookies` turns both off.
 - All data stays in `chrome.storage.local` on the device. Exports are files the
   user saves themselves, and can be password protected (AES-256-GCM with a
-  PBKDF2-SHA-256 key, 600,000 iterations).
+  PBKDF2-SHA-256 key, 600,000 iterations). An export includes saved page
+  versions only if the user ticks that option; imported versions are validated
+  field by field, and screenshots in them must be inline images.
 
 The full security model is in [SPEC.md](SPEC.md#security-model). The code has no
 build step and no dependencies, so what is in this repository is exactly what
