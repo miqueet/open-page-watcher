@@ -135,6 +135,16 @@ const server = http.createServer((req, res) => {
     return res.end(`<!doctype html><title>Screen</title><div class="monaco-editor"><div class="margin">${lines.map(([i]) => `<div>${i + 1}</div>`).join('')}</div>
       <div class="view-lines">${lines.map(([i, l]) => `<div class="view-line" style="top:${i * 19}px"><span>${l.replace(/ /g, '&nbsp;')}</span></div>`).join('')}</div></div>`);
   }
+  if (req.url === '/editor-copy') {
+    // Like Monaco bundled into an app: no data a script can reach, but "select
+    // all" then copy puts the whole text into the copy event.
+    res.setHeader('content-type', 'text/html');
+    return res.end(`<!doctype html><title>Copy</title><div class="monaco-editor"><textarea class="inputarea"></textarea>
+      <div class="view-lines">${shownLines(6).map((l, i) => `<div class="view-line" style="top:${i * 19}px"><span>${l.replace(/ /g, '&nbsp;')}</span></div>`).join('')}</div></div>
+      <script>const full = ${JSON.stringify(editorConfig)}; let all = false; const ta = document.querySelector('.inputarea');
+        ta.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'a') { all = true; e.preventDefault(); } });
+        ta.addEventListener('copy', (e) => { e.clipboardData.setData('text/plain', all ? full : full.split('\\n')[0]); e.preventDefault(); });</script>`);
+  }
   if (req.url === '/broken') {
     res.statusCode = 500;
     return res.end('down');
@@ -1212,7 +1222,11 @@ try {
     const s = await waitFor(async () => (await history(screen.id))[0], 30000);
     assert.equal(s.text, shownLines(6).join('\n'));
     assert.equal(s.reader, undefined);
-    for (const id of [picked.id, fetched.id, framed.id, screen.id]) await send({ type: 'deleteWatch', id });
+    const copied = await send({ type: 'createWatch', watch: { url: `${base}/editor-copy`, mode: 'tab', renderDelaySeconds: 0 } });
+    const c = await waitFor(async () => (await history(copied.id))[0], 30000);
+    assert.equal(c.text, editorConfig);
+    assert.equal(c.reader, 2);
+    for (const id of [picked.id, fetched.id, framed.id, screen.id, copied.id]) await send({ type: 'deleteWatch', id });
 
     // Diagnostics: a test check that saves nothing, with no text or addresses
     // unless asked for.

@@ -76,8 +76,8 @@ The file is shown in a code editor, which draws only the lines on screen. Use
 [Code editors](loading-pages.md#code-editors-config-files-scripts-queries). If
 the editor sits inside a frame, also tick **Include content inside frames on
 the page**. Still short? Download the diagnostics file (below) and look at
-`testCheck.frames[].editors`: `"source": "model"` means the whole text was
-read, `"screen"` means only the drawn lines were.
+`testCheck.frames[].editors`: `"source": "model"`, `"page-data"` or `"copy"`
+means the whole text was read, `"screen"` means only the drawn lines were.
 
 ## "The number alert reads the wrong number"
 

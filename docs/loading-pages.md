@@ -72,14 +72,19 @@ picker; the whole editor is watched, not just the line you clicked.
   change, so you aren't alerted about lines that were simply never read before.
 - If the full text can't be reached (the
   [diagnostics file](troubleshooting.md#download-diagnostics) says
-  `"source": "screen"`), only the drawn lines are saved, still with their
+  `"source": "screen"`, usually with an `"error"` saying why), only the drawn lines are saved, still with their
   indentation.
 - When the page is downloaded instead, its scripts never run, so there is no
   editor to read: use a hidden tab.
 - It never happens in live mode, where the editor may hold what you typed.
 
 How it works: only the page's own scripts can see an editor's text, so a small
-read-only function runs in the page to fetch it. It is passed nothing but a
+function runs in the page to fetch it. Some apps bundle the Monaco editor so
+that nothing outside it can reach its text; then the function selects all in
+the editor and asks it to copy into a made-up copy event, and reads the text
+from that event. Your clipboard is never used or changed, and this only
+happens in the hidden window the extension opened (the copied text must also
+match the lines the editor shows, or it isn't used). It is passed nothing but a
 size limit, and what it returns is only ever saved and compared as text. Your
 organization can turn this off (`disableEditorReading`); then editors are read
 as far as they are drawn.

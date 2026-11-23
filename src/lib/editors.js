@@ -13,7 +13,16 @@
 // The list follows the order of the outermost editor elements in the page,
 // which the extractor (running separately in the extension's own world)
 // finds the same way. source is 'model' (the editor's own data), 'page-data'
-// (the text the page handed to the editor), or '' when neither could be read.
+// (the text the page handed to the editor), 'copy' (what the editor itself
+// would copy after "select all"), or '' when none of these worked.
+//
+// options.copy allows the last way: Monaco bundled into an app keeps no data
+// anywhere a script can reach, but its own copy handler writes the selected
+// text into the copy event. The function selects all and sends the editor a
+// made-up copy event carrying its own empty DataTransfer, then reads that.
+// The system clipboard is never touched (pages can't reach it with made-up
+// events). It changes the editor's selection, so it is only allowed in the
+// hidden window the extension opened, never in the user's own tabs.
 export function readEditors(options = {}) {
   const SELECTOR = '.cm-editor, .CodeMirror, .monaco-editor, .ace_editor';
   const maxChars = Number(options.maxChars) > 0 ? Number(options.maxChars) : 2_000_000;
@@ -85,6 +94,44 @@ export function readEditors(options = {}) {
     return null;
   }
 
+  // Every line the editor shows must be in a guessed text, in order.
+  function fitsShown(node, kind, text) {
+    const shown = shownLines(node, kind);
+    if (!shown.length) return false;
+    let at = 0;
+    for (const line of shown) {
+      const i = text.indexOf(line, at);
+      if (i < 0) return false;
+      at = i + line.length;
+    }
+    return true;
+  }
+
+  // Select all, then ask the editor to copy into an event we hold.
+  function fromCopy(node, kind) {
+    if (kind !== 'monaco') return null;
+    const target = node.querySelector('.native-edit-context, textarea.inputarea, textarea');
+    if (!target) return null;
+    target.focus({ preventScroll: true });
+    // A hidden window has no focus, so Chrome may not send the focus events
+    // the editor waits for before it takes keys.
+    if (!document.hasFocus()) {
+      target.dispatchEvent(new FocusEvent('focus'));
+      target.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    }
+    const mac = /Mac|iPhone|iPad/.test(String(navigator.platform || ''));
+    target.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'a', code: 'KeyA', keyCode: 65, ctrlKey: !mac, metaKey: mac, bubbles: true, cancelable: true,
+    }));
+    const data = new DataTransfer();
+    target.dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }));
+    const text = data.getData('text/plain');
+    target.blur();
+    if (!text) throw new Error('Copying from the editor gave nothing');
+    if (!fitsShown(node, kind, text)) throw new Error(`Copying from the editor gave ${text.split('\n').length} lines that don't match what it shows`);
+    return text;
+  }
+
   // The lines the editor shows, as plain text, to check a guess against.
   function shownLines(node, kind) {
     const pick = {
@@ -102,17 +149,7 @@ export function readEditors(options = {}) {
   // when the editor's own data can't be reached, and only if every line the
   // editor shows is in that text, in order.
   function fromPageData(node, kind) {
-    const shown = shownLines(node, kind);
-    if (!shown.length) return null;
-    const fits = (text) => {
-      let at = 0;
-      for (const line of shown) {
-        const i = text.indexOf(line, at);
-        if (i < 0) return false;
-        at = i + line.length;
-      }
-      return true;
-    };
+    const fits = (text) => fitsShown(node, kind, text);
     for (let el = node, depth = 0; el && depth < 4; el = el.parentElement, depth++) {
       const key = Object.keys(el).find((k) => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
       let fiber = key ? el[key] : null;
@@ -145,11 +182,19 @@ export function readEditors(options = {}) {
         text = fromPageData(node, kind);
         if (text !== null) source = 'page-data';
       } catch {
-        // leave it to what the editor shows
+        // try copying
+      }
+    }
+    if (text === null && options.copy === true) {
+      try {
+        text = fromCopy(node, kind);
+        if (text !== null) source = 'copy';
+      } catch (e) {
+        error = String((e && e.message) || e).slice(0, 200);
       }
     }
     const entry = { kind, source };
-    if (error) entry.error = error;
+    if (error && text === null) entry.error = error;
     if (text !== null) {
       text = text.replace(/\r\n?/g, '\n');
       if (total + text.length > maxChars) {
