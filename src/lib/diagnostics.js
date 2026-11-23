@@ -40,6 +40,40 @@ const STATE = [
   'redirectBlocked', 'scriptsNeeded', 'scriptsAsked', 'rebaseline',
 ];
 
+// Plain-language notes on what the test check found, to read first.
+export function findings(watch, run) {
+  const notes = [];
+  if (run.siteAccess === false) notes.push('The extension has no access to this site, so nothing could be read.');
+  if (run.signInPage) notes.push('The page asked to sign in instead of showing its content.');
+  if (run.scriptsNeeded) notes.push('Downloaded without scripts, the page is only a placeholder: use "Open it in a hidden window".');
+  const frames = Array.isArray(run.frames) ? run.frames : [];
+  const childFrames = frames.reduce((n, f) => n + (Array.isArray(f.childFrames) ? f.childFrames.length : 0), 0);
+  if (childFrames && !watch.includeFrames) {
+    notes.push(`The page has ${childFrames} frame(s) that aren't read. If what's missing is inside one, turn on "Include content inside frames on the page".`);
+  }
+  if (Array.isArray(run.skippedFrames) && run.skippedFrames.length) {
+    notes.push(`${run.skippedFrames.length} frame(s) were left out because they come from sites this extension wasn't allowed to read.`);
+  }
+  for (const f of frames) {
+    for (const e of Array.isArray(f.editors) ? f.editors : []) {
+      const h = e.hints || {};
+      const size = h.estimatedLines ? ` (it holds about ${h.estimatedLines} lines)`
+        : h.scrollsFurther ? ' (it scrolls further, so it holds more)' : '';
+      if (e.source === 'screen') {
+        notes.push(watch.mode === 'tab'
+          ? `A ${e.kind} code editor's full text couldn't be read, so only the ${e.lines} lines it drew were kept${size}. See "attempts" for why.`
+          : `A ${e.kind} code editor was found, but downloaded pages don't run the editor, so only ${e.lines} drawn lines were kept${size}. Use "Open it in a hidden window".`);
+      } else if (e.source) {
+        notes.push(`A ${e.kind} code editor was read in full (${e.lines} lines, via ${e.source}).`);
+      }
+    }
+    if (f.ok === false && f.error) notes.push(`Frame ${f.frameId}: ${f.error}`);
+  }
+  if (run.ok && typeof run.text === 'string' && !run.text.trim()) notes.push('The check worked but captured no text.');
+  if (!run.ok && run.error && !notes.length) notes.push(`The check failed: ${run.error}`);
+  return notes;
+}
+
 const iso = (t) => (Number(t) > 0 ? new Date(Number(t)).toISOString() : null);
 
 // run: what a test check just found (see diagnoseWatch in background.js):
@@ -65,7 +99,7 @@ export async function buildDiagnostics({
   }
 
   const { text, ...rest } = run;
-  const testCheck = { ...rest };
+  const testCheck = { findings: findings(watch, run), ...rest };
   if (typeof text === 'string') {
     testCheck.captured = await textStats(text);
     const latest = history[history.length - 1];

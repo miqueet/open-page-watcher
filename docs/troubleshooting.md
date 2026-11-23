@@ -102,10 +102,20 @@ Then it downloads a JSON file describing:
 - the extension and Chrome versions, and any organization policy in effect;
 - the watch's settings (how the page is loaded, selectors, frames, filters,
   ignore options, alert rules) and its current state (last check, last error);
+- `testCheck.findings`: a few plain sentences on what the test check found,
+  to read first (for example "A monaco code editor's full text couldn't be
+  read, so only the 56 lines it drew were kept (it scrolls further, so it
+  holds more)", or "The page has 2 frame(s) that aren't read");
 - the test check: whether the site is allowed, the HTTP status and content
   type (downloads) or load time (hidden tab), every frame that was read with
   its own frames, the code editors found and whether their whole text was
   read, how much was captured, and how long it took;
+- for each code editor: every way the extension tried to read it and what
+  happened (`attempts`, such as `"no monaco global"` or `"failed: …"`), how
+  many lines it drew against how many it holds (`hints.drawnLines`,
+  `hints.estimatedLines`, `hints.scrollsFurther`) and its input type; and for
+  the page, whether the hidden window had focus, and which editor globals and
+  frameworks (React, Angular, Vue, webpack) it uses, by name only;
 - the last three saved versions and the last 15 checks.
 
 It is built to be safe to share:

@@ -768,6 +768,7 @@ async function extractInTab(tabId, watch, { userTab = false, expect = null, trac
   // Code editors only draw the lines on screen; their whole text is read
   // separately (never in the user's own tab, where it may be their typing).
   const editorsByFrame = new Map();
+  const pageHintsByFrame = new Map();
   const frameIds = [];
   if (!userTab && !(await getPolicy()).disableEditorReading) {
     const started = Date.now();
@@ -784,7 +785,13 @@ async function extractInTab(tabId, watch, { userTab = false, expect = null, trac
             source: typeof e?.text === 'string' ? String(e.source || 'model') : '',
             text: typeof e?.text === 'string' ? e.text : undefined,
             error: typeof e?.error === 'string' ? e.error.slice(0, 200) : undefined,
+            // Only for the diagnostics file.
+            attempts: Array.isArray(e?.attempts) ? e.attempts.slice(0, 5).map((a) => ({
+              way: String(a?.way || '').slice(0, 20), result: String(a?.result || '').slice(0, 200),
+            })) : undefined,
+            hints: plainData(e?.hints),
           })));
+          if (trace) pageHintsByFrame.set(r.frameId, plainData(r.result.page));
         }
       }
       if (trace) trace.editorRead = { ms: Date.now() - started };
@@ -824,10 +831,14 @@ async function extractInTab(tabId, watch, { userTab = false, expect = null, trac
         matched: r.matched || 0,
         chars: typeof r.text === 'string' ? r.text.length : 0,
         childFrames: Array.isArray(r.childFrames) ? r.childFrames : [],
-        editors: (Array.isArray(r.editors) ? r.editors : []).map((e, n) => ({
-          ...e, error: editors[n]?.error || undefined,
-        })),
+        editors: (Array.isArray(r.editors) ? r.editors : []).map((e) => {
+          const read = editors[e.index] || {};
+          return {
+            ...e, error: read.error || undefined, attempts: read.attempts, hints: read.hints,
+          };
+        }),
         editorsOnPage: editors.length,
+        page: pageHintsByFrame.get(i.frameId),
       };
     });
   }
@@ -847,6 +858,18 @@ async function extractInTab(tabId, watch, { userTab = false, expect = null, trac
   // a new starting point instead of a change (see record).
   if (found.some((r) => (r.editors || []).some((e) => e.source && e.source !== 'screen'))) result.reader = READER_EDITORS;
   return result;
+}
+
+// A small copy of what a page returned, keeping only plain values, for the
+// diagnostics file.
+function plainData(value) {
+  if (!value || typeof value !== 'object') return undefined;
+  try {
+    const json = JSON.stringify(value, (k, v) => (typeof v === 'string' ? v.slice(0, 200) : v));
+    return json.length <= 4000 ? JSON.parse(json) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function withTimeout(promise, ms, message) {

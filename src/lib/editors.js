@@ -166,34 +166,108 @@ export function readEditors(options = {}) {
     return null;
   }
 
+  const message = (e) => String((e && e.message) || e).slice(0, 200);
+
+  // What the page is built with, by name only, to explain why an editor's
+  // data can or can't be reached.
+  function pageHints() {
+    const hints = {
+      focused: document.hasFocus(),
+      visibility: document.visibilityState,
+      globals: ['monaco', 'require', 'define', 'ace', 'CodeMirror'].filter((k) => k in globalThis),
+      frameworks: [],
+    };
+    try {
+      const root = document.querySelector('#root, #app, #__next, [data-reactroot]') || document.body;
+      const keys = root ? Object.keys(root).concat(Object.keys(root.firstElementChild || {})) : [];
+      if (keys.some((k) => k.startsWith('__react'))) hints.frameworks.push('react');
+      if (document.querySelector('[ng-version]')) hints.frameworks.push('angular');
+      if (root && (root.__vue_app__ || root.__vue__)) hints.frameworks.push('vue');
+      if (Object.keys(globalThis).some((k) => k.startsWith('webpackChunk') || k === 'webpackJsonp')) hints.frameworks.push('webpack');
+      if (document.querySelector('script[type="module"]')) hints.frameworks.push('es-modules');
+    } catch {
+      // only hints
+    }
+    return hints;
+  }
+
+  // How big the editor says its text is, from the height it reserves for
+  // scrolling, against the lines it actually drew.
+  function sizeHints(node, kind) {
+    const lines = Array.from(node.querySelectorAll({
+      codemirror6: '.cm-content .cm-line',
+      codemirror5: '.CodeMirror-code pre.CodeMirror-line',
+      monaco: '.view-lines .view-line',
+      ace: '.ace_text-layer .ace_line',
+    }[kind]));
+    const out = { drawnLines: lines.length };
+    const lineHeight = lines.length ? lines[0].getBoundingClientRect().height : 0;
+    // The scrolling height the editor reserves for all its lines.
+    let total = 0;
+    if (kind === 'monaco') {
+      const track = node.querySelector('.scrollbar.vertical');
+      const slider = track && track.querySelector('.slider');
+      const t = track ? track.getBoundingClientRect().height : 0;
+      const h = slider ? slider.getBoundingClientRect().height : 0;
+      if (t > 0 && h > 0) {
+        out.scrollsFurther = h < t - 1;
+        // Monaco never draws its slider under 20px, so that size only says "long".
+        if (h > 20) total = (t / h) * node.getBoundingClientRect().height;
+      }
+    } else {
+      const scroller = node.querySelector({ codemirror6: '.cm-scroller', codemirror5: '.CodeMirror-scroll', ace: '.ace_scrollbar-v' }[kind]);
+      if (scroller) {
+        out.scrollsFurther = scroller.scrollHeight > scroller.clientHeight + 1;
+        total = scroller.scrollHeight;
+      }
+    }
+    if (lineHeight > 0 && total > 0) out.estimatedLines = Math.round(total / lineHeight);
+    out.input = node.querySelector('.native-edit-context') ? 'edit-context'
+      : node.querySelector('textarea') ? 'textarea'
+        : node.querySelector('[contenteditable]') ? 'contenteditable' : 'none';
+    return out;
+  }
+
+  const page = pageHints();
   for (const node of nodes) {
     const kind = kindOf(node);
     let text = null;
     let source = '';
     let error = '';
+    const attempts = [];
     try {
       text = fromModel(node, kind);
       if (text !== null) source = 'model';
+      attempts.push({ way: 'model', result: text !== null ? 'read' : kind === 'monaco' && !globalThis.monaco ? 'no monaco global' : 'editor data not found' });
     } catch (e) {
-      error = String((e && e.message) || e).slice(0, 200);
+      error = message(e);
+      attempts.push({ way: 'model', result: `failed: ${error}` });
     }
     if (text === null) {
       try {
         text = fromPageData(node, kind);
         if (text !== null) source = 'page-data';
-      } catch {
-        // try copying
+        attempts.push({ way: 'page-data', result: text !== null ? 'read' : page.frameworks.includes('react') ? 'no matching React property' : 'not a React page' });
+      } catch (e) {
+        attempts.push({ way: 'page-data', result: `failed: ${message(e)}` });
       }
     }
     if (text === null && options.copy === true) {
       try {
         text = fromCopy(node, kind);
         if (text !== null) source = 'copy';
+        attempts.push({ way: 'copy', result: text !== null ? 'read' : 'not tried for this editor' });
       } catch (e) {
-        error = String((e && e.message) || e).slice(0, 200);
+        error = message(e);
+        attempts.push({ way: 'copy', result: `failed: ${error}` });
       }
     }
-    const entry = { kind, source };
+    const entry = { kind, source, attempts };
+    try {
+      entry.hints = sizeHints(node, kind);
+    } catch {
+      // only hints
+    }
     if (error && text === null) entry.error = error;
     if (text !== null) {
       text = text.replace(/\r\n?/g, '\n');
@@ -209,5 +283,5 @@ export function readEditors(options = {}) {
     }
     editors.push(entry);
   }
-  return { editors, frameUrl };
+  return { editors, frameUrl, page: nodes.length ? page : undefined };
 }

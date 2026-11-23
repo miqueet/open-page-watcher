@@ -35,7 +35,7 @@ test('text stats describe the text without showing it', async () => {
 
 test('by default the file has no captured text, addresses or names', async () => {
   const report = await buildDiagnostics({
-    version: '0.4.0', watch, history: [{ t: 1, text: config, reader: 2 }], log: [{ t: 1, ok: true, ms: 10, via: 'schedule' }], run,
+    version: "0.4.0", watch, history: [{ t: 1, text: config, reader: 2 }], log: [{ t: 1, ok: true, ms: 10, via: 'schedule' }], run,
   });
   const json = JSON.stringify(report);
   assert.doesNotMatch(json, /intranet|vendor|daemon|192\.0\.2|Load balancer|infra|advanced/);
@@ -68,4 +68,22 @@ test('hiding addresses leaves the original report alone', () => {
   const hidden = hideAddresses(report);
   assert.equal(hidden.watch.url, 'http://site-1/');
   assert.equal(report.watch.url, 'http://a.example/');
+});
+
+test('findings explain partly read editors and unread frames in plain words', async () => {
+  const partial = {
+    ok: true,
+    text: 'global',
+    frames: [{
+      frameId: 0, ok: true, childFrames: ['https://a.example/x'],
+      editors: [{ kind: 'monaco', source: 'screen', lines: 56, hints: { estimatedLines: 620 } }],
+    }],
+  };
+  const report = await buildDiagnostics({ watch: { ...watch, includeFrames: false }, run: partial });
+  const notes = report.testCheck.findings.join('\n');
+  assert.match(notes, /monaco code editor's full text couldn't be read, so only the 56 lines/);
+  assert.match(notes, /about 620 lines/);
+  assert.match(notes, /1 frame\(s\) that aren't read/);
+  const fetched = await buildDiagnostics({ watch: { ...watch, mode: 'fetch' }, run: partial });
+  assert.match(fetched.testCheck.findings.join('\n'), /Open it in a hidden window/);
 });
