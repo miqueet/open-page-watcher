@@ -77,6 +77,24 @@ filtered text. See [Regular expressions](regex.md#1-keep-only-text-matching).
 The new text is compared with the last **saved** version (not the last check:
 a version is saved only when something changed).
 
+### Telling versions apart
+
+Some pages show different things at the same address, depending on what you
+last picked in the app: a cluster, an account, a region. A watch with **Tell
+versions apart by** reads a short piece of text from the page that names what
+it shows, and compares each new version only with the last version that
+showed the same:
+
+- A CSS selector or `xpath:…` reads that element's text.
+- A `/regular expression/` searches the text of the whole page and uses its
+  first group (or the whole match without one), e.g. `/Cluster\n(.+)/`.
+
+The first version for something new is saved without an alert, the versions
+list shows what each version showed, and the check log says "First version
+for “…”". With **Only check when it shows**, a check whose text doesn't
+contain that (any case) is skipped and logged, and nothing is saved. See
+[Examples: test or production at the same address](examples.md#23-an-app-that-shows-test-or-production-at-the-same-address).
+
 Before comparing, both texts go through the [ignore options](ignoring-noise.md):
 lines you ignore are dropped, dates or numbers are blanked, and so on. This is
 only for the comparison. The saved version always keeps the real text, so the

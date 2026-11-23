@@ -49,6 +49,12 @@ Additions that common monitors don't offer as local features:
   that gets past the sign-in page, and a choice of what to do (notify, open a
   tab to sign in, pause, or nothing)
 - A chart of the first number on the page over time
+- Telling versions apart by what the page shows ("Tell versions apart by"): for
+  apps that show a different cluster, account or region at the same address.
+  A selector, XPath or regex (first group) reads a short label; each version
+  is compared only with the last version with the same label, the first one
+  for a label is saved without an alert, and "Only check when it shows" skips
+  (and logs) checks that show something else
 - Opening the page with what changed highlighted (CSS Custom Highlight API)
 - Formatting changes, per watch and off by default ("Also watch formatting").
   The extractor writes the text a second time with plain marks for headings,

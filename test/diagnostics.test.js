@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDiagnostics, hideAddresses, textStats } from '../src/lib/diagnostics.js';
+import { buildDiagnostics, hideAddresses, textStats, findings } from '../src/lib/diagnostics.js';
 
 const watch = {
   id: 'w1',
@@ -86,4 +86,11 @@ test('findings explain partly read editors and unread frames in plain words', as
   assert.match(notes, /1 frame\(s\) that aren't read/);
   const fetched = await buildDiagnostics({ watch: { ...watch, mode: 'fetch' }, run: partial });
   assert.match(fetched.testCheck.findings.join('\n'), /Open it in a hidden window/);
+});
+
+test('findings say what told versions apart and whether a check would be skipped', () => {
+  const watch = { mode: 'tab', context: { expr: '#cluster', only: 'Test' } };
+  assert.match(findings(watch, { ok: true, text: 'x', context: 'Production' }).join('\n'), /showed “Production”.*not “Test”, so a check would be skipped/);
+  assert.doesNotMatch(findings(watch, { ok: true, text: 'x', context: 'Test Cluster' }).join('\n'), /skipped/);
+  assert.match(findings(watch, { ok: true, text: 'x', contextError: 'Context: bad' }).join('\n'), /couldn't be read/);
 });

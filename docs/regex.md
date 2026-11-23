@@ -2,7 +2,7 @@
 
 A regular expression ("regex") is a pattern for text: `\$[\d,.]+` means "a
 dollar sign followed by digits, commas and dots", which matches `$1,299.00`.
-Open Page Watcher uses regex in four places, and each behaves a little
+Open Page Watcher uses regex in five places, and each behaves a little
 differently:
 
 | Where | What it does | Case | `^` and `$` mean |
@@ -11,6 +11,7 @@ differently:
 | [2. Matches regex rule](#2-the-matches-regex-alert-rules) (Alerts) | Alerts only if the text matches (or doesn't) | Any case | Start and end of **each line** |
 | [3. Ignore lines containing](#3-ignore-lines-containing) (What to watch) | Lines that match never count as a change | As you write it: add `i` for any case | Start and end of the **line** |
 | [4. Which number](#4-which-number) (number alert rules) | Says which number a number rule reads | Any case | Start and end of **each line** |
+| [Tell versions apart by](how-it-works.md#telling-versions-apart) (What to watch) | Reads what the page shows, e.g. which cluster, from its first group | As you write it: add `i` for any case | Start and end of the **whole page's text** (add `m` for each line) |
 
 The syntax is JavaScript's, the same as in Chrome's developer tools. If a
 pattern isn't valid, the editor shows the error and won't save.

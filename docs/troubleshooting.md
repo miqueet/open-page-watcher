@@ -81,6 +81,15 @@ the page**. Still short? Download the diagnostics file (below) and look at
 `testCheck.frames[].editors`: `"source": "model"`, `"page-data"` or `"copy"`
 means the whole text was read, `"screen"` means only the drawn lines were.
 
+## "I switched the app to another cluster (or account) and got an alert for everything"
+
+The page's address didn't change, but what it shows did. Set **Tell versions
+apart by** to something on the page that names what it shows, so each version
+is compared with the last one that showed the same. Add **Only check when it
+shows** to watch only one of them. See
+[Examples: test or production at the same address](examples.md#23-an-app-that-shows-test-or-production-at-the-same-address).
+The diagnostics file's findings say what the page showed for it.
+
 ## "The number alert reads the wrong number"
 
 Number rules and the chart use the first number in the watched text unless the

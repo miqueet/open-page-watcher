@@ -33,6 +33,7 @@ selectors to match it (the picker can write them for you; see
 20. [A PDF that's replaced at the same address](#20-a-pdf-thats-replaced-at-the-same-address)
 21. [A button that gets disabled](#21-a-button-that-gets-disabled)
 22. [A status light whose color comes from the stylesheet](#22-a-status-light-whose-color-comes-from-the-stylesheet)
+23. [An app that shows test or production at the same address](#23-an-app-that-shows-test-or-production-at-the-same-address)
 
 ---
 
@@ -365,6 +366,33 @@ always change.*
 Notification: **"Looks different: 4% of the screenshot changed."** The
 **Screenshot** view outlines what changed. Screenshots need Chrome's access to
 all sites; [here's why](html-and-visual-changes.md#why-it-asks-for-access-to-all-sites).
+
+## 23. An app that shows test or production at the same address
+
+*A management console shows the config of whichever cluster (or account,
+tenant, region) you last picked. The address stays the same, so after you
+switch in the app, the watch sees a completely different config and alerts
+about everything.*
+
+| Field | Value |
+| --- | --- |
+| How to load the page | Open it in a hidden window |
+| Tell versions apart by | Something that names what's shown: a selector such as `.cluster-name`, or a regex over the page's text such as `/Cluster\n(.+)/` when the page shows the label "Cluster" with the name on the next line |
+| Only check when it shows | Optional: `Test Cluster` to watch only that one |
+
+Each version is then compared only with earlier versions that showed the same
+cluster. Switching clusters saves a first version for the new one, with no
+alert, and switching back compares with that cluster's last version. With
+**Only check when it shows**, checks that find another cluster are skipped and
+logged as "Skipped: the page showed “Production Cluster”, not “Test Cluster”".
+The versions list shows which cluster each version came from. See
+[How it works: telling versions apart](how-it-works.md#telling-versions-apart).
+
+The watch only sees what the app shows in its hidden window, which is the
+cluster you last picked in your browser: it can't switch clusters by itself.
+To keep an eye on two clusters all the time, use two watches, each with
+**Only check when it shows** set to one of them, and expect each one to be
+skipped while the app is on the other.
 
 ---
 

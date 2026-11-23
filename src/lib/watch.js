@@ -79,6 +79,31 @@ function cleanSelectors(list, { allowAttr }) {
     });
 }
 
+// What tells versions apart, when one address shows different things (an
+// app that remembers which cluster, account or region you picked): a CSS
+// selector, xpath:..., or /regex/flags over the whole page's text (group 1
+// if it has one). `only` keeps just the versions that show that text.
+export function parseContextExpr(expr) {
+  const e = str(expr).trim();
+  if (!e) return null;
+  const re = /^\/(.+)\/([imsu]*)$/s.exec(e);
+  if (re) return { type: 'regex', expr: re[1], flags: re[2] };
+  if (/^xpath:/i.test(e)) return { type: 'xpath', expr: e.slice(6).trim() };
+  return { type: 'css', expr: e };
+}
+
+function cleanContext(src) {
+  const expr = str(src?.expr).trim().slice(0, 500);
+  const parsed = parseContextExpr(expr);
+  if (parsed?.type === 'regex') new RegExp(parsed.expr, parsed.flags); // throws a readable error if invalid
+  return { expr: parsed ? expr : '', only: parsed ? str(src?.only).trim().replace(/\s+/g, ' ').slice(0, 200) : '' };
+}
+
+// Whether a version's context text matches the watch's `only` text.
+export function contextMatches(context, only) {
+  return !only || String(context || '').toLowerCase().includes(only.toLowerCase());
+}
+
 // "Ignore lines" entries: plain text (matched anywhere in a line, any case)
 // or /regular expression/flags.
 export function ignoreLineMatcher(entry) {
@@ -180,6 +205,7 @@ export function sanitizeWatch(input, existing = {}) {
     selectors,
     excludes: cleanSelectors(src.excludes, { allowAttr: false }),
     regexFilter,
+    context: cleanContext(src.context),
     mode: src.mode === 'tab' ? 'tab' : 'fetch',
     renderDelaySeconds: clampInt(src.renderDelaySeconds, 0, 60, 3),
     includeFrames: src.includeFrames === true,
@@ -242,12 +268,14 @@ export function sanitizeWatch(input, existing = {}) {
     // The next version is a new starting point (the way the page is loaded
     // changed), so it doesn't count as a change.
     rebaseline: existing.rebaseline === true,
+    // What the page showed for the watch's context at the last check.
+    lastContext: typeof existing.lastContext === 'string' ? existing.lastContext.slice(0, 200) : '',
   };
 }
 
 const RUNTIME_FIELDS = [
   'lastCheckedAt', 'lastChangedAt', 'nextCheckAt', 'lastError', 'errorCount', 'unread', 'lastSummary', 'signInNeeded', 'signInHandled',
-  'redirectBlocked', 'scriptsNeeded', 'scriptsAsked', 'rebaseline',
+  'redirectBlocked', 'scriptsNeeded', 'scriptsAsked', 'rebaseline', 'lastContext',
 ];
 
 // Fields included in an export file.
