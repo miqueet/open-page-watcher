@@ -137,7 +137,7 @@ from any other proprietary extension.
 - Download every saved version of a watch as a CSV file for a spreadsheet
 
 **Keeping control**
-- Password-protected backups (AES-256-GCM), plus plain JSON import and export
+- Password-protected backups (AES-256-GCM), plus plain JSON import and export, with saved versions (history) if you want them
 - IT teams can limit sites, intervals and options through Chrome policy (see
   [docs/enterprise.md](docs/enterprise.md))
 

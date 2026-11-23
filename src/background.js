@@ -24,6 +24,7 @@ import {
   getSettings, sanitizeSettings, serialize, getKeptSites, updateKeptSites,
 } from './lib/storage.js';
 import { isSitePattern } from './lib/sites.js';
+import { cleanHistory, mergeHistory, IMPORT_BATCH } from './lib/history.js';
 
 const TICK_ALARM = 'tick';
 const FETCH_TIMEOUT_MS = 30_000;
@@ -1548,9 +1549,11 @@ const uiHandlers = {
     return {};
   },
 
+  // Saved versions are added by the inbox, which reads them from storage
+  // itself: with them the file can be larger than a message may be.
   async exportAll() {
     const watches = Object.values(await getWatches()).map(exportableWatch);
-    return { data: { format: 'open-page-watcher', version: 3, watches, settings: await getSettings() } };
+    return { data: { format: 'open-page-watcher', version: 4, watches, settings: await getSettings() } };
   },
 
   async importAll({ data, includeSettings = false }) {
@@ -1560,10 +1563,15 @@ const uiHandlers = {
     const existing = await getWatches();
     const imported = [];
     const skipped = [];
+    // The id each imported watch had in the file, so the inbox can send its
+    // saved versions afterwards.
+    const fileIds = new Map();
     for (const raw of data.watches.slice(0, 1000)) {
       try {
         const taken = typeof raw?.id === 'string' && Object.hasOwn(existing, raw.id);
-        imported.push(await enforcePolicy(sanitizeWatch({ ...raw, id: taken ? undefined : raw?.id })));
+        const w = await enforcePolicy(sanitizeWatch({ ...raw, id: taken ? undefined : raw?.id }));
+        if (typeof raw.id === 'string') fileIds.set(w, raw.id);
+        imported.push(w);
       } catch (e) {
         skipped.push(`${raw?.name || raw?.url || 'unknown'}: ${e.message}`);
       }
@@ -1572,14 +1580,45 @@ const uiHandlers = {
     await updateWatches((all) => {
       const room = maxWatches ? Math.max(0, maxWatches - Object.keys(all).length) : Infinity;
       for (const w of imported.splice(room)) skipped.push(`${w.name}: Your organization allows at most ${maxWatches} watches`);
-      for (const w of imported) all[w.id] = w;
+      for (const w of imported) {
+        // Two watches in one file with the same id: the second gets a new one.
+        if (Object.hasOwn(all, w.id)) w.id = crypto.randomUUID();
+        all[w.id] = w;
+      }
     });
+    const ids = imported.filter((w) => fileIds.has(w)).map((w) => [fileIds.get(w), w.id]);
     if (includeSettings === true && data.settings && typeof data.settings === 'object') {
       await chrome.storage.local.set({ settings: sanitizeSettings(data.settings) });
     }
     await broadcast({ type: 'changed' });
     const origins = [...new Set(imported.map((w) => originPattern(w.url)))];
-    return { imported: imported.length, skipped, origins };
+    return { imported: imported.length, skipped, origins, ids };
+  },
+
+  // Saved versions from a backup file, for a watch just imported from it. The
+  // inbox sends them a few at a time; each batch is checked and merged in time
+  // order with what the watch already has.
+  async importHistory({ id, entries }) {
+    if (!Array.isArray(entries) || entries.length > IMPORT_BATCH) throw new Error('Send at most ' + IMPORT_BATCH + ' versions at a time');
+    const watch = await getWatch(id);
+    if (!watch) throw new Error('That watch no longer exists');
+    const { disableScreenshots } = await getPolicy();
+    const clean = cleanHistory(entries, { shots: !disableScreenshots });
+    if (!clean.length) return { added: 0 };
+    const { added, merged } = await serialize(async () => {
+      const key = `history:${id}`;
+      const before = (await chrome.storage.local.get(key))[key] || [];
+      const after = mergeHistory(before, clean, watch.historyLimit);
+      await chrome.storage.local.set({ [key]: after });
+      return { added: Math.max(0, after.length - before.length), merged: after };
+    });
+    // The newest version after the first one is the last change.
+    const newest = merged.length > 1 ? merged[merged.length - 1].t : 0;
+    await updateWatches((all) => {
+      const w = all[id];
+      if (w && newest > (w.lastChangedAt || 0)) w.lastChangedAt = newest;
+    });
+    return { added };
   },
 };
 
