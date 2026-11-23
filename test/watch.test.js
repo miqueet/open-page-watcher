@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sanitizeWatch, postProcess, originPattern, isDue, exportableWatch } from '../src/lib/watch.js';
+import { sanitizeWatch, postProcess, originPattern, isDue, exportableWatch, parseContextExpr, contextMatches } from '../src/lib/watch.js';
 
 test('rejects non-http URLs', () => {
   for (const url of ['javascript:alert(1)', 'file:///etc/passwd', 'chrome://settings', 'data:text/html,hi', '']) {
@@ -192,4 +192,29 @@ test('number rules need a number and a valid which-number regex', () => {
   assert.throws(() => rule({ type: 'numberBelow', value: 'cheap' }), /needs a number/);
   assert.throws(() => rule({ type: 'numberBelow', value: '5', find: '(' }));
   assert.equal(rule({ type: 'changedLinesAbove', value: '' }).condition.rules[0].value, '');
+});
+
+test('reads what tells versions apart as a regex, an XPath or a CSS selector', () => {
+  assert.equal(parseContextExpr(''), null);
+  assert.deepEqual(parseContextExpr('/Cluster\\n(.+)/i'), { type: 'regex', expr: 'Cluster\\n(.+)', flags: 'i' });
+  assert.deepEqual(parseContextExpr('xpath: //h1'), { type: 'xpath', expr: '//h1' });
+  assert.deepEqual(parseContextExpr('.top-bar .cluster'), { type: 'css', expr: '.top-bar .cluster' });
+});
+
+test('keeps the context setting clean', () => {
+  const base = { url: 'https://example.com/' };
+  assert.deepEqual(sanitizeWatch(base).context, { expr: '', only: '' });
+  assert.deepEqual(sanitizeWatch({ ...base, context: { expr: ' #cluster ', only: '  Test   Cluster ' } }).context,
+    { expr: '#cluster', only: 'Test Cluster' });
+  assert.deepEqual(sanitizeWatch({ ...base, context: { expr: '', only: 'x' } }).context, { expr: '', only: '' });
+  assert.throws(() => sanitizeWatch({ ...base, context: { expr: '/(/' } }));
+  const w = sanitizeWatch({ ...base, context: { expr: '#c' }, lastContext: 'Test' });
+  assert.equal(exportableWatch(w).lastContext, undefined);
+});
+
+test('matches the context against "only when it shows", ignoring case', () => {
+  assert.equal(contextMatches('Test Cluster', ''), true);
+  assert.equal(contextMatches('Test Cluster', 'test cluster'), true);
+  assert.equal(contextMatches('Production Cluster', 'Test'), false);
+  assert.equal(contextMatches('', 'Test'), false);
 });

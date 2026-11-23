@@ -37,6 +37,10 @@ const editorConfig = ['global', '  daemon', '  maxconn 2000', '', 'defaults web'
   ...Array.from({ length: 30 }, (_, i) => [`backend be-${i + 1}`, `  server s${i + 1} 192.0.2.${i + 1}:443 check`, '']).flat(),
   '# end'].join('\n');
 let editorExtra = '';
+// An app that shows one of several clusters at the same address, with a
+// different config for each.
+let cluster = 'Test Cluster';
+const clusterConfig = { 'Test Cluster': 'server a 192.0.2.10', 'Production Cluster': 'server b 192.0.2.20' };
 const shownLines = (n) => editorConfig.split('\n').slice(0, n);
 // Like CodeMirror 6: line numbers first, then the drawn lines; the whole text
 // is only in the editor's data, which page scripts keep on the element.
@@ -134,6 +138,11 @@ const server = http.createServer((req, res) => {
     res.setHeader('content-type', 'text/html');
     return res.end(`<!doctype html><title>Screen</title><div class="monaco-editor"><div class="margin">${lines.map(([i]) => `<div>${i + 1}</div>`).join('')}</div>
       <div class="view-lines">${lines.map(([i, l]) => `<div class="view-line" style="top:${i * 19}px"><span>${l.replace(/ /g, '&nbsp;')}</span></div>`).join('')}</div></div>`);
+  }
+  if (req.url === '/cluster') {
+    res.setHeader('content-type', 'text/html');
+    return res.end(`<!doctype html><header><span>Cluster</span><div class="cluster">${cluster}</div></header>
+      <pre>${clusterConfig[cluster]}</pre>`);
   }
   if (req.url === '/editor-copy') {
     // Like Monaco bundled into an app: no data a script can reach, but "select
@@ -1304,6 +1313,51 @@ try {
     const saved = JSON.parse(fs.readFileSync(await file.path(), 'utf8'));
     assert.equal(saved.contentIncluded, false);
     await send({ type: 'deleteWatch', id: res.id });
+  });
+
+  await step('versions are told apart by what the page shows, and other ones can be skipped', async () => {
+    cluster = 'Test Cluster';
+    const res = await send({ type: 'createWatch', watch: { url: `${base}/cluster`, context: { expr: '/Cluster\\n(.+)/' } } });
+    await waitFor(async () => (await history(res.id)).length === 1);
+    assert.equal((await history(res.id))[0].context, 'Test Cluster');
+    assert.equal((await watchOf(res.id)).lastContext, 'Test Cluster');
+    // Switching cluster is a first version for it, not a change.
+    cluster = 'Production Cluster';
+    await send({ type: 'checkNow', id: res.id });
+    let h = await history(res.id);
+    assert.equal(h.length, 2);
+    assert.equal(h[1].context, 'Production Cluster');
+    assert.equal((await watchOf(res.id)).unread, false);
+    // Back to the first cluster, unchanged: nothing new.
+    cluster = 'Test Cluster';
+    await send({ type: 'checkNow', id: res.id });
+    assert.equal((await history(res.id)).length, 2);
+    // A real change in it is compared with that cluster's last version.
+    clusterConfig['Test Cluster'] = 'server a 192.0.2.11';
+    await send({ type: 'checkNow', id: res.id });
+    h = await history(res.id);
+    assert.equal(h.length, 3);
+    assert.equal((await watchOf(res.id)).unread, true);
+    const log = await page.evaluate(async (k) => (await chrome.storage.local.get(k))[k] || [], `log:${res.id}`);
+    assert.ok(log.some((e) => /First version for “Production Cluster”/.test(e.note || '')));
+
+    // "Only check when it shows" skips other clusters without saving them.
+    const only = await send({ type: 'createWatch', watch: { url: `${base}/cluster`, selectors: [{ type: 'css', expr: 'pre' }], context: { expr: '.cluster', only: 'test' } } });
+    await waitFor(async () => (await history(only.id)).length === 1);
+    cluster = 'Production Cluster';
+    await send({ type: 'checkNow', id: only.id });
+    assert.equal((await history(only.id)).length, 1);
+    const w = await watchOf(only.id);
+    assert.equal(w.lastContext, 'Production Cluster');
+    assert.equal(w.lastError, '');
+    const { report } = await send({ type: 'diagnoseWatch', id: only.id });
+    assert.match(report.testCheck.findings.join(' '), /not “test”, so a check would be skipped/);
+    await page.evaluate((id) => { location.hash = `#/w/${id}`; }, only.id);
+    await page.getByText('last showed “Production Cluster” · only when it shows “test”').waitFor();
+    await page.getByRole('button', { name: 'Edit' }).click();
+    assert.equal(await page.getByLabel('Only check when it shows').inputValue(), 'test');
+    cluster = 'Test Cluster';
+    for (const id of [res.id, only.id]) await send({ type: 'deleteWatch', id });
   });
 
   await step('site access page lists sites, the watches on each, and sites that need access', async () => {

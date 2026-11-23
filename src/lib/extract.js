@@ -12,6 +12,7 @@
 //   captureFormat: boolean,    // also return the text annotated with its formatting
 //   userTab: boolean,          // the user's own tab (live mode): skip anything they may have typed
 //   expect: { url } | { origin },  // the main frame must still show this page or site
+//   context: { type: 'css' | 'xpath' | 'regex', expr, flags? },  // what tells versions apart
 //   editors: [{ text?, source }],  // full text of the page's code editors, read
 //                                  // by readEditors (src/lib/editors.js) in the page's world
 // }
@@ -352,6 +353,26 @@ export function extractText(spec, doc = document) {
     // not an HTML document
   }
   const result = read();
+  // The text that tells versions apart (e.g. which cluster the app shows).
+  if (spec && spec.context && spec.context.expr) {
+    try {
+      excluded = new Set();
+      const c = spec.context;
+      let found = '';
+      if (c.type === 'regex') {
+        const root = doc.body || doc.documentElement;
+        const m = root ? new RegExp(c.expr, (c.flags || '').replace(/g/g, '')).exec(textOf(root)) : null;
+        found = m ? (m[1] ?? m[0]) : '';
+      } else {
+        const [node] = find(c);
+        if (node) found = node.nodeType === 1 || node.nodeType === 9 ? textOf(node) : String(node.nodeValue || '');
+      }
+      result.context = String(found || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+    } catch (e) {
+      result.context = '';
+      result.contextError = 'Context: ' + (e && e.message ? e.message : String(e));
+    }
+  }
   return Object.assign(result, {
     signInForm, title, scripts, emptyRoot, frameUrl, childFrames, editors: editorsRead,
   });

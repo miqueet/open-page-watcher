@@ -17,7 +17,7 @@ import { getPolicy, checkSiteAllowed, applyPolicy } from './lib/policy.js';
 import { needsSignIn, signInError, SIGN_IN_MESSAGE } from './lib/signin.js';
 import { scriptsNeeded, scriptsError } from './lib/scriptpage.js';
 import {
-  sanitizeWatch, exportableWatch, postProcess, isDue, nextCheckTime, originPattern, sameDocument, comparisonKey, isHttpUrl,
+  sanitizeWatch, exportableWatch, postProcess, parseContextExpr, contextMatches, isDue, nextCheckTime, originPattern, sameDocument, comparisonKey, isHttpUrl,
 } from './lib/watch.js';
 import {
   getWatches, getWatch, updateWatches, getHistory, appendHistory, deleteHistory, appendLog, getLog,
@@ -218,6 +218,8 @@ async function diagnoseWatch(id, { includeContent = false, includeAddresses = fa
     if (result.html) run.htmlChars = result.html.length;
     if (result.shotError) run.screenshotError = result.shotError;
     if (result.kind) run.parsedAs = result.kind;
+    if (typeof result.context === 'string') run.context = result.context;
+    if (result.contextError) run.contextError = result.contextError;
     run.ok = true;
   } catch (e) {
     run.error = e?.message || String(e);
@@ -291,8 +293,29 @@ async function record(watch, result, error, {
     return;
   }
 
-  const history = await getHistory(id);
+  // A watch that tells versions apart (e.g. by the cluster the app shows)
+  // compares each version only with earlier ones that showed the same.
+  const contextOn = Boolean(watch.context?.expr);
+  const context = contextOn ? String(result.context || '') : undefined;
+  if (contextOn && !contextMatches(context, watch.context.only)) {
+    logEntry.note = `Skipped: the page showed “${context || 'nothing'}”, not “${watch.context.only}”`;
+    await updateWatches((all) => {
+      const w = all[id];
+      if (!w) return;
+      w.lastCheckedAt = now;
+      if (via !== 'live') w.nextCheckAt = nextCheckTime(watch, now);
+      w.lastError = '';
+      w.errorCount = 0;
+      w.lastContext = context;
+    });
+    await appendLog(id, logEntry);
+    await broadcast({ type: 'changed', id });
+    return;
+  }
+  const allHistory = await getHistory(id);
+  const history = contextOn ? allHistory.filter((h) => h.context === context) : allHistory;
   const previous = history[history.length - 1];
+  if (contextOn && !previous && allHistory.length) logEntry.note = `First version for “${context || 'nothing found'}”`;
   const textChanged = !previous
     || comparisonKey(previous.text, watch.ignore) !== comparisonKey(result.text, watch.ignore);
   // Only the formatting changed (when the watch counts formatting).
@@ -322,6 +345,7 @@ async function record(watch, result, error, {
     if (typeof result.format === 'string') entry.format = result.format;
     if (result.shot) entry.shot = result.shot;
     if (result.reader) entry.reader = result.reader;
+    if (contextOn) entry.context = context;
     await appendHistory(id, entry, watch.historyLimit);
     if (previous && !rebaseline) {
       logEntry.changed = true;
@@ -339,7 +363,7 @@ async function record(watch, result, error, {
     await serialize(async () => {
       const key = `history:${id}`;
       const h = (await chrome.storage.local.get(key))[key] || [];
-      const last = h[h.length - 1];
+      const last = contextOn ? h.filter((v) => v.context === context).pop() : h[h.length - 1];
       if (last && last.text === result.text) {
         if (result.html && !last.html) last.html = result.html;
         if (typeof result.format === 'string' && typeof last.format !== 'string') last.format = result.format;
@@ -368,6 +392,7 @@ async function record(watch, result, error, {
     if (via !== 'live') w.nextCheckAt = nextCheckTime(watch, now);
     w.lastError = '';
     w.errorCount = 0;
+    if (contextOn) w.lastContext = context;
     if (cookiesTurnedOn) w.sendCookies = true;
     if (w.signInHandled && w.onSignIn === 'pause') w.paused = false; // paused only until signed in
     w.signInNeeded = false;
@@ -540,7 +565,10 @@ function extractSpec(watch, baseUrl, { userTab = false, expect = null } = {}) {
   // A regex filter keeps only bits of the text, so the formatting of the
   // rest isn't compared.
   const captureFormat = watch.watchFormatting === true && !watch.regexFilter;
-  return { selectors: watch.selectors, excludes: watch.excludes, baseUrl, captureHtml: true, captureFormat, userTab, expect };
+  return {
+    selectors: watch.selectors, excludes: watch.excludes, baseUrl, captureHtml: true, captureFormat, userTab, expect,
+    context: parseContextExpr(watch.context?.expr),
+  };
 }
 
 async function readLimited(response, limit) {
@@ -854,6 +882,8 @@ async function extractInTab(tabId, watch, { userTab = false, expect = null, trac
     html: html.length <= MAX_HTML_CHARS ? html : '',
   };
   if (found.every((r) => typeof r.format === 'string')) result.format = found.map((r) => r.format).filter(Boolean).join('\n');
+  if (typeof main?.context === 'string') result.context = main.context;
+  if (main?.contextError) result.contextError = main.contextError;
   // Code editors whose whole text was read, so the first such version can be
   // a new starting point instead of a change (see record).
   if (found.some((r) => (r.editors || []).some((e) => e.source && e.source !== 'screen'))) result.reader = READER_EDITORS;

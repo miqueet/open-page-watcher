@@ -286,6 +286,8 @@ async function renderDetail() {
     watch.mode !== 'tab' && watch.sendCookies ? 'sends your cookies' : null,
     watch.live ? 'live while open' : null,
     watch.selectors.length ? `${watch.selectors.length} selected part${watch.selectors.length > 1 ? 's' : ''}` : 'whole page',
+    watch.context?.expr && watch.lastCheckedAt ? `last showed “${watch.lastContext || 'nothing'}”` : null,
+    watch.context?.only ? `only when it shows “${watch.context.only}”` : null,
   ].filter(Boolean).join(' · ');
 
   detail.replaceChildren(...[
@@ -355,7 +357,8 @@ function numberView(watch, history) {
 }
 
 function versionLabel(entry, i) {
-  return `Version ${i + 1} · ${new Date(entry.t).toLocaleString()}`;
+  const context = typeof entry.context === 'string' ? ` · ${entry.context || '(nothing found)'}` : '';
+  return `Version ${i + 1} · ${new Date(entry.t).toLocaleString()}${context}`;
 }
 
 const VIEWS = {
@@ -421,7 +424,19 @@ function historyView(history, watch = {}) {
   const options = () => history.map((h, i) => el('option', { value: String(i) }, versionLabel(h, i)));
   const from = el('select', { 'aria-label': 'Older version' }, options());
   const to = el('select', { 'aria-label': 'Newer version' }, options());
-  from.value = String(history.length - 2);
+  // Compare the newest version with the one before it that showed the same
+  // context (e.g. the same cluster), when versions are told apart.
+  const newest = history[history.length - 1];
+  let before = history.length - 2;
+  if (typeof newest.context === 'string') {
+    for (let i = history.length - 2; i >= 0; i--) {
+      if (history[i].context === newest.context) {
+        before = i;
+        break;
+      }
+    }
+  }
+  from.value = String(before);
   to.value = String(history.length - 1);
   const onlyChanges = el('input', { type: 'checkbox', checked: true });
   const showDeleted = el('input', { type: 'checkbox', checked: state.showDeleted });
@@ -761,7 +776,7 @@ const PRESETS = [
 
 function watchForm(watch) {
   const w = watch || {
-    name: '', url: '', selectors: [], excludes: [], regexFilter: '', mode: 'fetch', renderDelaySeconds: 3,
+    name: '', url: '', selectors: [], excludes: [], regexFilter: '', context: { expr: '', only: '' }, mode: 'fetch', renderDelaySeconds: 3,
     includeFrames: false, live: false, sendCookies: false, autoCookies: true, askToRender: true, onSignIn: 'notify', intervalMinutes: DEFAULT_INTERVAL_MINUTES,
     schedule: { type: 'interval', randomMaxMinutes: DEFAULT_INTERVAL_MINUTES * 2, window: { enabled: false, days: [1, 2, 3, 4, 5], start: '09:00', end: '17:00' } },
     historyLimit: DEFAULT_HISTORY, condition: { match: 'all', rules: [] }, notify: true, sound: false, labels: [],
@@ -778,6 +793,8 @@ function watchForm(watch) {
     selectors: el('textarea', { rows: 3, placeholder: '#price\n.status-banner\na.download @href\nxpath://table[1]//tr[2]' }),
     excludes: el('textarea', { rows: 2, placeholder: '.ad-banner\n.timestamp' }),
     regexFilter: el('input', { value: w.regexFilter, placeholder: 'Optional, e.g. \\$[\\d,.]+' }),
+    contextExpr: el('input', { value: w.context?.expr || '', placeholder: 'Optional, e.g. /Cluster\\n(.+)/ or #account-name' }),
+    contextOnly: el('input', { value: w.context?.only || '', placeholder: 'Optional, e.g. Test Cluster' }),
     scheduleType: el('select', {},
       el('option', { value: 'interval' }, 'Every'), el('option', { value: 'random' }, 'Randomly between')),
     every: el('input', { type: 'number', min: 1, value: String(n), required: true }),
@@ -1014,6 +1031,7 @@ function watchForm(watch) {
         selectors: textToSelectors(f.selectors.value),
         excludes: textToSelectors(f.excludes.value).map(({ type, expr }) => ({ type, expr })),
         regexFilter: f.regexFilter.value,
+        context: { expr: f.contextExpr.value, only: f.contextOnly.value },
         intervalMinutes: Number(f.every.value) * Number(f.unit.value),
         schedule: {
           type: f.scheduleType.value,
@@ -1085,6 +1103,11 @@ function watchForm(watch) {
     el('label', { class: 'field' }, el('span', {}, 'Leave out'), f.excludes,
       el('span', { class: 'hint' }, 'Selectors for parts to ignore, such as ads or timestamps.')),
     el('label', { class: 'field' }, el('span', {}, 'Keep only text matching this regular expression'), f.regexFilter),
+    el('label', { class: 'field' }, el('span', {}, 'Tell versions apart by'), f.contextExpr,
+      el('span', { class: 'hint' }, 'For pages that show different things at the same address, like the cluster, account or region you last picked in the app. '
+        + 'A CSS selector, xpath:…, or /regular expression/ over the page’s text (its first group is used). Each version is compared only with earlier ones that showed the same.')),
+    el('label', { class: 'field' }, el('span', {}, 'Only check when it shows'), f.contextOnly,
+      el('span', { class: 'hint' }, 'Optional. Checks where the text above doesn’t contain this are skipped and logged, not saved.')),
     el('div', { class: 'field' }, el('span', {}, 'Don’t count it as a change when only these differ'),
       el('div', { class: 'days' },
         el('label', {}, f.ignore.dates, 'Dates and times'),

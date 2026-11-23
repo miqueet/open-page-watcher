@@ -33,11 +33,11 @@ async function sha256(text) {
 const SETTINGS = [
   'mode', 'renderDelaySeconds', 'includeFrames', 'live', 'sendCookies', 'autoCookies', 'onSignIn', 'askToRender',
   'intervalMinutes', 'schedule', 'historyLimit', 'condition', 'paused', 'pauseAfterAlert', 'selectors', 'excludes',
-  'regexFilter', 'ignore', 'watchFormatting', 'watchHtml', 'ignoreAttributes', 'watchScreenshot', 'screenshotThreshold',
+  'regexFilter', 'context', 'ignore', 'watchFormatting', 'watchHtml', 'ignoreAttributes', 'watchScreenshot', 'screenshotThreshold',
 ];
 const STATE = [
   'createdAt', 'lastCheckedAt', 'lastChangedAt', 'nextCheckAt', 'lastError', 'errorCount', 'signInNeeded', 'signInHandled',
-  'redirectBlocked', 'scriptsNeeded', 'scriptsAsked', 'rebaseline',
+  'redirectBlocked', 'scriptsNeeded', 'scriptsAsked', 'rebaseline', 'lastContext',
 ];
 
 // Plain-language notes on what the test check found, to read first.
@@ -69,6 +69,13 @@ export function findings(watch, run) {
     }
     if (f.ok === false && f.error) notes.push(`Frame ${f.frameId}: ${f.error}`);
   }
+  if (watch.context && watch.context.expr) {
+    if (run.contextError) notes.push(`What tells versions apart couldn't be read: ${run.contextError}`);
+    else if (typeof run.context === 'string') {
+      const only = watch.context.only;
+      notes.push(`The page showed “${run.context || 'nothing'}” for “Tell versions apart by”${only && !String(run.context).toLowerCase().includes(only.toLowerCase()) ? `, not “${only}”, so a check would be skipped` : ''}.`);
+    }
+  }
   if (run.ok && typeof run.text === 'string' && !run.text.trim()) notes.push('The check worked but captured no text.');
   if (!run.ok && run.error && !notes.length) notes.push(`The check failed: ${run.error}`);
   return notes;
@@ -91,6 +98,7 @@ export async function buildDiagnostics({
   for (const h of history.slice(-3)) {
     const v = { savedAt: iso(h.t), ...(await textStats(h.text)) };
     if (h.reader) v.reader = h.reader;
+    if (typeof h.context === 'string') v.context = h.context;
     if (h.html) v.htmlChars = h.html.length;
     if (typeof h.format === 'string') v.formatChars = h.format.length;
     if (h.shot) v.screenshot = true;
