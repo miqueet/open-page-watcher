@@ -773,7 +773,7 @@ async function extractInTab(tabId, watch, { userTab = false, expect = null, trac
     const started = Date.now();
     try {
       const reads = await withTimeout(chrome.scripting.executeScript({
-        target, world: 'MAIN', func: readEditors, args: [{ maxChars: MAX_TEXT_CHARS }],
+        target, world: 'MAIN', func: readEditors, args: [{ maxChars: MAX_TEXT_CHARS, copy: true }],
       }), EDITOR_READ_TIMEOUT_MS, 'Reading the code editors took too long');
       for (const r of reads) {
         frameIds.push(r.frameId);

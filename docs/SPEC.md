@@ -138,8 +138,12 @@ These run on the device but were left out as security trade-offs:
    In a hidden tab, code editors (CodeMirror, Monaco, Ace) keep their text in
    their own data, which only page scripts can reach, so `readEditors`
    (`src/lib/editors.js`) runs in the page's world (`world: 'MAIN'`) to read
-   it. It takes nothing but a size limit, calls only the editors' read
-   methods, and its result is treated as untrusted text (capped, never run,
+   it. It takes nothing but a size limit and calls only the editors' read
+   methods. For Monaco bundled with no reachable data, it selects all in the
+   editor and dispatches a synthetic `copy` event carrying its own
+   `DataTransfer`, reading what the editor's copy handler writes there (the
+   system clipboard is never touched; hidden window only; the text must
+   contain the drawn lines in order). Its result is treated as untrusted text (capped, never run,
    only stored and compared). The extractor itself still runs in the
    extension's isolated world. It never runs in live mode, never in frames the
    user hasn't allowed, and organization policy can turn it off
