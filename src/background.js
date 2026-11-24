@@ -25,12 +25,11 @@ import {
 } from './lib/storage.js';
 import { isSitePattern } from './lib/sites.js';
 import { cleanHistory, mergeHistory, IMPORT_BATCH } from './lib/history.js';
+import { readLimited, MAX_PAGE_BYTES, MAX_PDF_BYTES } from './lib/readlimit.js';
 
 const TICK_ALARM = 'tick';
 const FETCH_TIMEOUT_MS = 30_000;
 const RENDER_TIMEOUT_MS = 45_000;
-const MAX_BYTES = 5 * 1024 * 1024;
-const MAX_PDF_BYTES = 20 * 1024 * 1024;
 const MAX_TEXT_CHARS = 2_000_000; // per version, after extraction
 const MAX_HTML_CHARS = 300 * 1024; // snapshot kept for the visual view
 const MAX_CONCURRENT = 3;
@@ -456,10 +455,17 @@ async function fetchAndExtract(watch, policy, { scheduled = false, trace = null 
     if (!response.ok) throw new Error(`The site answered with HTTP ${response.status}`);
     if (response.redirected) await checkRedirect(watch, response.url, policy);
     const isPdf = /application\/pdf/i.test(response.headers.get('content-type') || '');
-    bytes = await readLimited(response, isPdf ? MAX_PDF_BYTES : MAX_BYTES);
+    bytes = await readLimited(response, isPdf ? MAX_PDF_BYTES : MAX_PAGE_BYTES, { pdf: isPdf });
     if (trace) Object.assign(trace.fetch, { bytes: bytes.length, ms: Date.now() - fetchStarted });
   } catch (e) {
     if (e.name === 'AbortError') throw new Error('The site took longer than 30 seconds to respond');
+    // A hidden tab reads the page where it already is, so its size doesn't
+    // matter there: say so when that's an option.
+    if (e.tooLarge && !/PDF/.test(e.message)) {
+      e.message += renderAllowed(policy)
+        ? '. A hidden tab can read it, because there it has no size limit.'
+        : '. Watch a smaller page, or a feed or API of this site, instead.';
+    }
     throw e;
   } finally {
     clearTimeout(timer);
@@ -569,29 +575,6 @@ function extractSpec(watch, baseUrl, { userTab = false, expect = null } = {}) {
     selectors: watch.selectors, excludes: watch.excludes, baseUrl, captureHtml: true, captureFormat, userTab, expect,
     context: parseContextExpr(watch.context?.expr),
   };
-}
-
-async function readLimited(response, limit) {
-  const reader = response.body.getReader();
-  const chunks = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > limit) {
-      reader.cancel();
-      throw new Error(`The page is larger than ${Math.round(limit / 1024 / 1024)} MB`);
-    }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const c of chunks) {
-    out.set(c, offset);
-    offset += c.byteLength;
-  }
-  return out;
 }
 
 // Loads the page in a minimized window so its JavaScript can render, then
