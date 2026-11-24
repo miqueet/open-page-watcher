@@ -62,6 +62,22 @@ use **Reselect on page** in the editor.
 - Click *inside* a selected element to leave that part out (it turns into a
   "Leave out" selector). Click it again to put it back.
 - **Enter** saves, **Esc** cancels.
+- **Use the page** (or **Alt+U**) pauses picking so you can click the page as
+  usual, for example to switch a tab or a toggle such as "Platform /
+  Individual product" so the part you want shows up. Click **Pick parts** (or
+  press **Alt+U** again) to carry on picking.
+
+### Parts behind a tab or toggle
+
+Many pages have all their tabs in the page and only show one at a time. You
+can watch a part on a tab that isn't showing: switch to it with **Use the
+page**, pick it, and save. The watch reads it whichever tab is showing, since
+downloading the page (and reading it in a hidden tab) gets every tab's content
+without clicking anything.
+
+When you reselect, parts that are on a tab that isn't showing are listed as
+**Keep N parts not shown on this page** and kept as they are. Switch to their
+tab with **Use the page** and they're shown as picked again.
 
 The picker writes the shortest selector it can find that matches only what you
 clicked, preferring an `id` that looks hand-written (`#product`) over long paths.

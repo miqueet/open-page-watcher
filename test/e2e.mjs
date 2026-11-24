@@ -69,6 +69,13 @@ function sendBigPage(res, bytes) {
 const server = http.createServer((req, res) => {
   if (req.url === '/big') return sendBigPage(res, 18 * 1024 * 1024);
   if (req.url === '/too-big') return sendBigPage(res, 27 * 1024 * 1024);
+  if (req.url === '/tabs') {
+    res.setHeader('content-type', 'text/html; charset=utf-8');
+    return res.end(`<!doctype html><title>Tabs</title>
+      <button id="toggle" onclick="a.hidden = !a.hidden; b.hidden = !b.hidden">Individual product</button>
+      <div id="a"><p>Platform 11.6.5</p></div>
+      <div id="b" hidden><p>Artifactory 7.1</p><p class="xray">Xray 3.2</p></div>`);
+  }
   if (req.url === '/product') {
     cookieSeen = req.headers.cookie || '';
     res.setHeader('content-type', 'text/html; charset=utf-8');
@@ -631,6 +638,40 @@ try {
     await page.click('form button[type=submit]');
     await waitFor(async () => !(await watchOf(id)).selectors.some((x) => x.expr === '#price'), 5000);
     assert.equal((await watchOf(id)).selectors.length, 3);
+    await send({ type: 'deleteWatch', id });
+  });
+
+  await step('the picker can pause to use the page, such as switching a toggle', async () => {
+    const id = (await send({ type: 'createWatch', watch: {
+      url: `${base}/tabs`, name: 'Toggle', selectors: [{ type: 'css', expr: '#b > p:nth-of-type(1)' }],
+    } })).id;
+    // The part behind the toggle is read without anyone switching it.
+    const h = await waitFor(async () => (await history(id))[0]);
+    assert.equal(h.text, 'Artifactory 7.1');
+
+    await page.evaluate((x) => { location.hash = x; }, `#/w/${encodeURIComponent(id)}/edit`);
+    await page.waitForSelector('button.pick:text("Reselect on page")');
+    const [tab] = await Promise.all([context.waitForEvent('page'), page.click('button.pick')]);
+    await waitFor(() => tab.evaluate(() => [...document.documentElement.children].some((c) => c.tagName === 'DIV')), 15000);
+    // While picking, clicks pick parts instead of using the page.
+    await tab.click('#toggle');
+    assert.equal(await tab.evaluate(() => document.querySelector('#b').hidden), true);
+    await tab.click('#toggle'); // and a second click unpicks it
+    await tab.keyboard.press('Alt+U');
+    await tab.click('#toggle');
+    assert.equal(await tab.evaluate(() => document.querySelector('#b').hidden), false);
+    await tab.keyboard.press('Alt+U');
+    await tab.click('p.xray');
+    await tab.keyboard.press('Enter');
+    await waitFor(() => tab.isClosed(), 5000);
+    const text = await waitFor(async () => {
+      const v = await page.inputValue('textarea');
+      return v.includes('xray') || v.includes('nth-of-type(2)') ? v : null;
+    }, 5000);
+    const lines = text.split('\n');
+    assert.ok(lines.includes('#b > p:nth-of-type(1)'), text); // picked again once shown, line kept
+    assert.ok(!lines.some((l) => /toggle/.test(l)), text); // clicks while paused aren't picks
+    assert.equal(lines.length, 2, text);
     await send({ type: 'deleteWatch', id });
   });
 
