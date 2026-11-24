@@ -110,7 +110,9 @@ broken regex, a bad JSON path), the editor says what's wrong and doesn't save.
 
 **Reselect on page** in the editor opens the page with your current selection
 already highlighted, so you can add or remove parts by clicking. Press Enter
-and you're taken back to the editor with the fields filled in.
+and you're taken back to the editor with the fields filled in. If the part you
+want is behind a tab or toggle, click **Use the page**, switch to it, then
+**Pick parts**.
 
 ## Adding several pages at once
 

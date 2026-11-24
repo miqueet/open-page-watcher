@@ -42,6 +42,7 @@
     <div class="bar">
       <span class="msg">Click parts to watch. Click inside a selection to leave part out. Enter saves, Esc cancels.</span>
       <label class="keep" hidden><input type="checkbox" checked><span></span></label>
+      <button class="use" title="Lets you click the page as usual, for example to switch a tab or toggle, so the part you want shows up. Picking is paused until you click Pick parts. Shortcut: Alt+U.">Use the page</button>
       <button class="primary save" disabled>Save (0)</button>
       <button class="cancel">Cancel</button>
     </div>`;
@@ -54,6 +55,11 @@
   const cancelBtn = root.querySelector('.cancel');
   const keepLabel = root.querySelector('.keep');
   const keepBox = keepLabel.querySelector('input');
+  const useBtn = root.querySelector('.use');
+  // While paused, clicks and keys go to the page as usual, so the user can
+  // switch a tab, toggle or menu to show the part they want.
+  let paused = false;
+  let pickMessage = msg.textContent;
   document.documentElement.appendChild(host);
 
   function place(box, el) {
@@ -71,7 +77,8 @@
       place(b, el);
       return b;
     };
-    selBoxes.replaceChildren(...selected.map((el) => box(el, 'sel')), ...excluded.map((el) => box(el, 'exc')));
+    // Parts hidden now (behind a tab or toggle) stay picked, without a box.
+    selBoxes.replaceChildren(...selected.filter(shown).map((el) => box(el, 'sel')), ...excluded.filter(shown).map((el) => box(el, 'exc')));
     if (forForm) {
       // Picking nothing here means watching the whole page.
       const n = selected.length + (keepBox.checked ? kept.selectors.length : 0);
@@ -95,6 +102,10 @@
   // clicks and key presses to pick and save parts of its choosing.
   function onMove(e) {
     if (!e.isTrusted) return;
+    if (paused) {
+      hoverBox.hidden = true;
+      return;
+    }
     const el = e.target;
     if (isOurs(el) || !(el instanceof Element)) {
       hoverBox.hidden = true;
@@ -105,7 +116,7 @@
   }
 
   function onClick(e) {
-    if (!e.isTrusted || isOurs(e.target) || e.composedPath().includes(host)) return;
+    if (paused || !e.isTrusted || isOurs(e.target) || e.composedPath().includes(host)) return;
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();
@@ -131,7 +142,7 @@
   }
 
   function block(e) {
-    if (!e.composedPath().includes(host)) {
+    if (!paused && !e.composedPath().includes(host)) {
       e.preventDefault();
       e.stopPropagation();
     }
@@ -139,6 +150,12 @@
 
   function onKey(e) {
     if (!e.isTrusted) return;
+    if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === 'KeyU') {
+      e.preventDefault();
+      setPaused(!paused);
+      return;
+    }
+    if (paused && !e.composedPath().includes(host)) return;
     if (e.key === 'Escape') {
       e.preventDefault();
       cancel();
@@ -218,37 +235,70 @@
     }
   }
 
-  const shown = (e) => e.getClientRects().length > 0;
+  function shown(e) {
+    return e.getClientRects().length > 0;
+  }
 
-  function preload() {
-    for (const line of config.selectors || []) {
-      const found = findAll(line).filter(shown);
-      const els = found.length <= 50 ? found.filter((e) => !selected.some((s) => s === e || s.contains(e))) : [];
-      if (!els.length) {
-        kept.selectors.push(line);
-        continue;
-      }
-      // A bigger part replaces smaller ones picked before it; their lines
-      // then aren't given back, since this one covers them.
-      drop(selected, (x) => els.some((e) => e.contains(x)));
-      selected.push(...els);
-      groups.push({ line, list: selected, els });
-    }
-    for (const line of config.excludes || []) {
-      const els = findAll(line).filter((e) => shown(e) && !excluded.includes(e) && selected.some((s) => s !== e && s.contains(e)));
-      if (!els.length) {
-        kept.excludes.push(line);
-        continue;
-      }
-      excluded.push(...els);
-      groups.push({ line, list: excluded, els });
-    }
+  // Shows a part chosen before as picked, if it's on the page now. Returns
+  // false when it isn't (it may be behind a tab or toggle).
+  function adoptSelector(line) {
+    const found = findAll(line).filter(shown);
+    const els = found.length <= 50 ? found.filter((e) => !selected.some((s) => s === e || s.contains(e))) : [];
+    if (!els.length) return false;
+    // A bigger part replaces smaller ones picked before it; their lines
+    // then aren't given back, since this one covers them.
+    drop(selected, (x) => els.some((e) => e.contains(x)));
+    selected.push(...els);
+    groups.push({ line, list: selected, els });
+    return true;
+  }
+
+  function adoptExclude(line) {
+    const els = findAll(line).filter((e) => shown(e) && !excluded.includes(e) && selected.some((s) => s !== e && s.contains(e)));
+    if (!els.length) return false;
+    excluded.push(...els);
+    groups.push({ line, list: excluded, els });
+    return true;
+  }
+
+  function showKept() {
     const n = kept.selectors.length;
     keepLabel.hidden = n === 0;
     keepLabel.querySelector('span').textContent = `Keep ${n} part${n > 1 ? 's' : ''} not shown on this page`;
     keepLabel.title = kept.selectors.join('\n');
+  }
+
+  function preload() {
+    for (const line of config.selectors || []) if (!adoptSelector(line)) kept.selectors.push(line);
+    for (const line of config.excludes || []) if (!adoptExclude(line)) kept.excludes.push(line);
+    showKept();
     keepBox.addEventListener('change', redraw);
     msg.textContent = 'Click parts to add or remove them, or inside one to leave part out.';
+  }
+
+  // After using the page, parts chosen before that it shows now are picked.
+  function adoptKept() {
+    if (!forForm) return;
+    drop(kept.selectors, adoptSelector);
+    drop(kept.excludes, adoptExclude);
+    showKept();
+  }
+
+  function setPaused(on) {
+    paused = on;
+    hoverBox.hidden = true;
+    if (on) {
+      pickMessage = msg.textContent;
+      msg.textContent = 'Use the page as usual, for example switch a tab or toggle, then click Pick parts.';
+      useBtn.textContent = 'Pick parts';
+      useBtn.classList.add('primary');
+    } else {
+      msg.textContent = pickMessage;
+      useBtn.textContent = 'Use the page';
+      useBtn.classList.remove('primary');
+      adoptKept();
+    }
+    redraw();
   }
 
   function toLines(list) {
@@ -307,6 +357,7 @@
   }
 
   saveBtn.addEventListener('click', (e) => e.isTrusted && save());
+  useBtn.addEventListener('click', (e) => e.isTrusted && setPaused(!paused));
   cancelBtn.addEventListener('click', (e) => e.isTrusted && cancel());
   // Lets the extension note which page the picker was started on; a save is
   // only accepted from that same page.
