@@ -121,6 +121,12 @@ cleaned-up copy of the HTML (for the visual view) and, if formatting is watched,
 the formatting. Old versions are dropped beyond "Versions to keep" (20 by
 default, up to 200).
 
+Only what you watch is saved, never the page it came from. A watch on one
+part of a 17 MB page saves just that part's text, plus its HTML (up to 300 KB,
+kept for the 5 newest versions only). A check that finds the same text saves
+nothing, so a page that rarely changes takes up almost no space however often
+it's checked.
+
 A version is saved even if the alert rules below say not to alert, so the
 history is always complete.
 
@@ -160,7 +166,8 @@ separately; see [Loading pages](loading-pages.md).
 To keep checks fast and safe:
 
 - A request gives up after 30 seconds.
-- Pages over 5 MB and PDFs over 20 MB are refused.
+- Downloaded pages over 25 MB and PDFs over 20 MB are refused. Pages read in a
+  hidden tab have no size limit, since Chrome already has them loaded.
 - The watched text can't be over 2 million characters; select part of the page.
 - Only `http://` and `https://` addresses can be watched.
 - A redirect must stay on the same site or on a site you allowed.

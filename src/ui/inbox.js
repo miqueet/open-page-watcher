@@ -175,6 +175,35 @@ $('bulk-action').addEventListener('change', async (e) => {
 // ---------------------------------------------------------------------------
 // Detail
 
+// The downloaded page was too big to read (src/lib/readlimit.js). A hidden
+// tab reads the page where Chrome already has it, so offers that.
+const TOO_LARGE = /^The page is larger than /;
+
+function tooLargeBanner(watch) {
+  const { id } = watch;
+  const policy = state.policy;
+  const renderOk = !policy?.disableRenderInTab && !policy?.disableCookies;
+  return el('div', { class: 'banner' },
+    el('span', {},
+      el('div', {}, watch.lastError),
+      el('div', { class: 'hint' }, renderOk
+        ? 'Reading it in a hidden tab has no size limit and lets its scripts run. That tab uses your Chrome sign-in for this site, and is closed right after each check.'
+        : 'Your organization doesn’t allow reading pages in a hidden tab.')),
+    renderOk ? el('button', {
+      class: 'primary',
+      onclick: async (e) => {
+        e.target.disabled = true;
+        try {
+          await call('changeLoading', { id, how: 'tab' });
+          toast('This watch now reads the page in a hidden tab.');
+        } catch (err) {
+          toast(err.message);
+          e.target.disabled = false;
+        }
+      },
+    }, 'Read it in a hidden tab') : null);
+}
+
 // Downloading the page only gave a placeholder: offers the ways to read it,
 // each one only for this watch.
 function scriptsNeededBanner(watch) {
@@ -274,6 +303,7 @@ async function renderDetail() {
     }, 'Read it in a hidden tab') : null) : null;
 
   const scriptsBanner = watch.scriptsNeeded && watch.mode !== 'tab' ? scriptsNeededBanner(watch) : null;
+  const sizeBanner = !scriptsBanner && watch.mode !== 'tab' && TOO_LARGE.test(watch.lastError || '') ? tooLargeBanner(watch) : null;
 
   const schedule = watch.schedule?.type === 'random'
     ? `randomly every ${watch.intervalMinutes}–${watch.schedule.randomMaxMinutes} min`
@@ -298,7 +328,8 @@ async function renderDetail() {
     banner,
     signInBanner,
     scriptsBanner,
-    watch.lastError && !(signInBanner && signInText && !watch.paused) && !scriptsBanner ? el('p', { class: 'error' }, watch.lastError) : null,
+    sizeBanner,
+    watch.lastError && !(signInBanner && signInText && !watch.paused) && !scriptsBanner && !sizeBanner ? el('p', { class: 'error' }, watch.lastError) : null,
     el('div', { class: 'row' },
       el('button', {
         class: 'primary',

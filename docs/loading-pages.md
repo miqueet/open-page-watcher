@@ -26,6 +26,13 @@ pages; anything where "View page source" (Ctrl+U) shows the text you want.
 loading, such as many dashboards, single-page apps and some stores. For those,
 use a hidden tab.
 
+**Size limit:** a downloaded page can be up to 25 MB (PDFs up to 20 MB). Some
+pages really are that big: one product download page sends 17 MB of HTML,
+mostly indentation. Bigger pages are stopped as soon as they pass the limit
+and the watch shows **The page is larger than 25 MB** with a **Read it in a
+hidden tab** button, since a hidden tab has no size limit. Only the parts you
+watch are ever saved, however big the page is.
+
 ## Hidden tab
 
 "Open it in a hidden window so its scripts run (for dynamic pages)."

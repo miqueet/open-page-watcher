@@ -19,7 +19,8 @@ alerted.
 | The site answered with HTTP 403 / 404 / 500… | The server refused or failed. 404: the page moved. 403: the site blocks automated visits or needs a sign-in. 429: too many requests | 404: update the address. 403: try **Send my cookies** or a hidden tab. 429 or 5xx: check less often |
 | The site took longer than 30 seconds to respond | The site is slow or down | Usually temporary. If it keeps happening, check less often |
 | The page took longer than 45 seconds to load | Hidden-tab mode: the page never finished loading | Try Download mode, or a shorter wait |
-| The page is larger than 5 MB (20 MB for PDFs) | Too big to read safely | Watch a smaller page or a feed/API instead |
+| The page is larger than 25 MB | Too big to download and read safely | Click **Read it in a hidden tab** on the watch: a hidden tab has no size limit. Or watch a feed or API of the site instead |
+| The PDF is larger than 20 MB | Too big to read safely | Watch a smaller file, or the page that links to it |
 | The watched text is over 2 million characters | The selection is enormous | Select part of the page |
 | The page redirected to …, which this watch doesn't have access to | The page sends visitors to another site, often a sign-in site | Usually a sign-in; see above. If the page really moved, change the address |
 | The page redirected to a different site | Hidden-tab mode ended up on another site | Same as above |

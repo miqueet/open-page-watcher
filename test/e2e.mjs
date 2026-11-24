@@ -49,7 +49,26 @@ const fakeCodeMirror = () => `<div class="cm-editor"><div class="cm-scroller">
   <div class="cm-content" contenteditable="true">${shownLines(5).map((l) => `<div class="cm-line">${l || '<br>'}</div>`).join('')}</div></div></div>
   <script>const full = ${JSON.stringify(editorConfig)} + ${JSON.stringify(editorExtra)};
     document.querySelector('.cm-content').cmTile = { root: { view: { state: { doc: { toString: () => full } } } } };</script>`;
+// A page as big as some real marketing pages: megabytes of tab indentation
+// around a few lines of content, sent in chunks without a declared size.
+function sendBigPage(res, bytes) {
+  res.setHeader('content-type', 'text/html; charset=UTF-8');
+  const filler = `<div class="row">${'\t'.repeat(200)}<span>filler</span>${'\t'.repeat(200)}</div>\n`;
+  res.write('<!doctype html><title>Big</title><div id="panel"><div><div>Release 7.1 is out</div></div></div>');
+  let sent = 0;
+  const more = () => {
+    while (sent < bytes) {
+      sent += filler.length;
+      if (!res.write(filler)) return res.once('drain', more);
+    }
+    res.end('</body>');
+  };
+  more();
+}
+
 const server = http.createServer((req, res) => {
+  if (req.url === '/big') return sendBigPage(res, 18 * 1024 * 1024);
+  if (req.url === '/too-big') return sendBigPage(res, 27 * 1024 * 1024);
   if (req.url === '/product') {
     cookieSeen = req.headers.cookie || '';
     res.setHeader('content-type', 'text/html; charset=utf-8');
@@ -287,6 +306,25 @@ try {
     assert.match(h.text, /Widget\n\$10\nIn stock/);
     assert.doesNotMatch(h.text, /window\.ran|\.x\{\}/);
     assert.match(h.text, /photo/);
+  });
+
+  await step('pages up to 25 MB are read; bigger ones point to a hidden tab', async () => {
+    const big = await send({ type: 'createWatch', watch: { url: `${base}/big`, selectors: [{ type: 'css', expr: '#panel > div > div:nth-of-type(1)' }] } });
+    assert.equal(big.ok, true, big.error);
+    const h = await waitFor(async () => (await history(big.id))[0], 60_000);
+    assert.equal(h.text, 'Release 7.1 is out');
+    // Only the selected part is kept, not the page.
+    assert.ok(JSON.stringify(h).length < 2000);
+
+    const tooBig = await send({ type: 'createWatch', watch: { url: `${base}/too-big`, selectors: [{ type: 'css', expr: '#panel' }] } });
+    const w = await waitFor(async () => { const x = await watchOf(tooBig.id); return x.lastError && x; }, 60_000);
+    assert.match(w.lastError, /^The page is larger than 25 MB\. A hidden tab can read it/);
+    assert.equal(w.mode, 'fetch');
+    await page.evaluate((i) => { location.hash = `#/w/${i}`; }, tooBig.id);
+    await page.waitForSelector('.banner:has-text("larger than 25 MB") button:has-text("Read it in a hidden tab")');
+    await page.evaluate(() => { location.hash = '#/'; });
+    await send({ type: 'deleteWatch', id: big.id });
+    await send({ type: 'deleteWatch', id: tooBig.id });
   });
 
   await step('cookies are not sent by default', async () => {

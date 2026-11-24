@@ -184,8 +184,9 @@ These run on the device but were left out as security trade-offs:
    it in a hidden tab, try again with cookies, or keep it as downloaded; nothing
    is escalated without that answer. The first version read the new way is a
    new starting point and doesn't alert.
-8. **Bounded work.** Requests time out after 30 seconds, pages over 5 MB and
-   PDFs over 20 MB are rejected, watched text over 2 million characters is
+8. **Bounded work.** Requests time out after 30 seconds, downloaded pages over
+   25 MB and PDFs over 20 MB are rejected (stopped as soon as they pass the
+   limit, or before downloading when the server announces a bigger size), watched text over 2 million characters is
    refused, snapshots are capped at 300 KB, history and logs are capped per
    watch, and only `http:` / `https:` URLs are accepted. PDF decompression and
    interpretation stop at fixed caps, and JSON that would balloon when
